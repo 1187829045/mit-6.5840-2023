@@ -17,110 +17,108 @@ import "sync"
 
 // The tester generously allows solutions to complete elections in one second
 // (much more than the paper's range of timeouts).
-const RaftElectionTimeout = 1000 * time.Millisecond
+const RaftElectionTimeout = 1000 * time.Millisecond // 定义了 Raft 选举超时时间，这里设置为 1000 毫秒（1 秒）
 
+// TestInitialElection2A 用于测试 Raft 中的初始选举。
 func TestInitialElection2A(t *testing.T) {
-	servers := 3
-	cfg := make_config(t, servers, false, false)
-	defer cfg.cleanup()
+	servers := 3                                 // 设定测试中参与的 Raft 服务器数量为 3 个
+	cfg := make_config(t, servers, false, false) // 创建一个 Raft 集群配置，false 表示没有模拟网络延迟和故障
+	defer cfg.cleanup()                          // 在测试结束后清理配置，释放资源
 
-	cfg.begin("Test (2A): initial election")
+	cfg.begin("Test (2A): initial election") // 开始执行测试：初始选举
 
-	// is a leader elected?
-	cfg.checkOneLeader()
+	// is a leader elected?  检查是否选出了一个领导者
+	cfg.checkOneLeader() // 验证是否有一个且仅有一个领导者
 
-	// sleep a bit to avoid racing with followers learning of the
-	// election, then check that all peers agree on the term.
-	time.Sleep(50 * time.Millisecond)
-	term1 := cfg.checkTerms()
-	if term1 < 1 {
-		t.Fatalf("term is %v, but should be at least 1", term1)
+	// sleep a bit to avoid racing with followers learning of the election,
+	// then check that all peers agree on the term.
+	time.Sleep(50 * time.Millisecond) // 暂停 50 毫秒，以避免与跟随者到选举结果的并发冲突
+	term1 := cfg.checkTerms()         // 检查所有 Raft 节点的 term 值
+	if term1 < 1 {                    // 如果 term 值小于 1，说明选举失败
+		t.Fatalf("term is %v, but should be at least 1", term1) // 报告错误并终止测试
 	}
 
 	// does the leader+term stay the same if there is no network failure?
-	time.Sleep(2 * RaftElectionTimeout)
-	term2 := cfg.checkTerms()
-	if term1 != term2 {
-		fmt.Printf("warning: term changed even though there were no failures")
+	time.Sleep(2 * RaftElectionTimeout) // 暂停 2 秒钟，模拟没有网络故障的情况下，观察领导者是否保持不变
+	term2 := cfg.checkTerms()           // 检查所有 Raft 节点的 term 值
+	if term1 != term2 {                 // 如果 term 值发生了变化，意味着选举过程中发生了问题
+		fmt.Printf("warning: term changed even though there were no failures") // 打印警告信息
 	}
 
-	// there should still be a leader.
-	cfg.checkOneLeader()
+	// there should still be a leader.  检查是否仍然有领导者
+	cfg.checkOneLeader() // 验证是否有一个且仅有一个领导者
 
-	cfg.end()
+	cfg.end() // 结束测试
 }
 
+// TestReElection2A 用于测试 Raft 在网络故障后重新选举的行为。
 func TestReElection2A(t *testing.T) {
-	servers := 3
-	cfg := make_config(t, servers, false, false)
-	defer cfg.cleanup()
+	servers := 3                                 // 设置参与测试的 Raft 服务器数量为 3
+	cfg := make_config(t, servers, false, false) // 创建 Raft 配置，禁用模拟的网络延迟和故障
+	defer cfg.cleanup()                          // 在测试结束后清理配置
 
-	cfg.begin("Test (2A): election after network failure")
+	cfg.begin("Test (2A): election after network failure") // 开始测试：网络故障后的选举
 
-	leader1 := cfg.checkOneLeader()
+	leader1 := cfg.checkOneLeader() // 获取当前的领导者
 
-	// if the leader disconnects, a new one should be elected.
-	cfg.disconnect(leader1)
-	cfg.checkOneLeader()
+	// if the leader disconnects, a new one should be elected. 如果领导者断开连接，应该重新选举一个新的领导者
+	cfg.disconnect(leader1) // 断开当前领导者与其他节点的连接
+	cfg.checkOneLeader()    // 检查是否重新选举出新的领导者
 
-	// if the old leader rejoins, that shouldn't
-	// disturb the new leader. and the old leader
-	// should switch to follower.
-	cfg.connect(leader1)
-	leader2 := cfg.checkOneLeader()
+	// if the old leader rejoins, that shouldn't disturb the new leader. and the old leader should switch to follower.
+	cfg.connect(leader1)            // 让之前的领导者重新加入集群
+	leader2 := cfg.checkOneLeader() // 检查是否选举出新的领导者
 
-	// if there's no quorum, no new leader should
-	// be elected.
-	cfg.disconnect(leader2)
-	cfg.disconnect((leader2 + 1) % servers)
-	time.Sleep(2 * RaftElectionTimeout)
+	// if there's no quorum, no new leader should be elected.
+	cfg.disconnect(leader2)                 // 断开新领导者的连接
+	cfg.disconnect((leader2 + 1) % servers) // 再断开另一个节点的连接
+	time.Sleep(2 * RaftElectionTimeout)     // 等待一段时间，模拟没有足够多数节点时的情况
 
-	// check that the one connected server
-	// does not think it is the leader.
-	cfg.checkNoLeader()
+	// check that the one connected server does not think it is the leader.
+	cfg.checkNoLeader() // 检查剩下的单个节点是否没有成为领导者
+	//fmt.Println("11111111111111111111111111111111111111111111111111")
+	// if a quorum arises, it should elect a leader. 如果形成了多数节点，应该重新选举领导者
+	cfg.connect((leader2 + 1) % servers) // 重新连接一个节点，形成多数节点
+	cfg.checkOneLeader()                 // 检查是否选出了新的领导者
 
-	// if a quorum arises, it should elect a leader.
-	cfg.connect((leader2 + 1) % servers)
-	cfg.checkOneLeader()
+	// re-join of last node shouldn't prevent leader from existing. 最后一个节点重新加入时不应该阻止领导者的存在
+	cfg.connect(leader2) // 重新连接之前的领导者
+	cfg.checkOneLeader() // 检查是否依然有领导者
 
-	// re-join of last node shouldn't prevent leader from existing.
-	cfg.connect(leader2)
-	cfg.checkOneLeader()
-
-	cfg.end()
+	cfg.end() // 结束测试
 }
 
+// TestManyElections2A 用于测试多次选举的情况。
 func TestManyElections2A(t *testing.T) {
-	servers := 7
-	cfg := make_config(t, servers, false, false)
-	defer cfg.cleanup()
+	servers := 7                                 // 设置参与测试的 Raft 服务器数量为 7
+	cfg := make_config(t, servers, false, false) // 创建 Raft 配置，禁用模拟的网络延迟和故障
+	defer cfg.cleanup()                          // 在测试结束后清理配置
 
-	cfg.begin("Test (2A): multiple elections")
+	cfg.begin("Test (2A): multiple elections") // 开始测试：多次选举
 
-	cfg.checkOneLeader()
+	cfg.checkOneLeader() // 检查是否有一个领导者
 
-	iters := 10
-	for ii := 1; ii < iters; ii++ {
-		// disconnect three nodes
-		i1 := rand.Int() % servers
-		i2 := rand.Int() % servers
-		i3 := rand.Int() % servers
-		cfg.disconnect(i1)
-		cfg.disconnect(i2)
-		cfg.disconnect(i3)
+	iters := 10                     // 设置进行选举的次数
+	for ii := 1; ii < iters; ii++ { // 执行 10 次选举
+		// disconnect three nodes 断开三个节点
+		i1 := rand.Int() % servers // 随机选择一个节点
+		i2 := rand.Int() % servers // 随机选择另一个节点
+		i3 := rand.Int() % servers // 随机选择第三个节点
+		cfg.disconnect(i1)         // 断开节点 i1
+		cfg.disconnect(i2)         // 断开节点 i2
+		cfg.disconnect(i3)         // 断开节点 i3
 
-		// either the current leader should still be alive,
-		// or the remaining four should elect a new one.
-		cfg.checkOneLeader()
+		// either the current leader should still be alive, or the remaining four should elect a new one.
+		cfg.checkOneLeader() // 检查是否仍然有领导者，如果当前领导者依然存活则保持领导者，否则剩余节点应选举出新领导者
 
-		cfg.connect(i1)
-		cfg.connect(i2)
-		cfg.connect(i3)
+		cfg.connect(i1) // 重新连接节点 i1
+		cfg.connect(i2) // 重新连接节点 i2
+		cfg.connect(i3) // 重新连接节点 i3
 	}
 
-	cfg.checkOneLeader()
+	cfg.checkOneLeader() // 检查是否有领导者
 
-	cfg.end()
+	cfg.end() // 结束测试
 }
 
 func TestBasicAgree2B(t *testing.T) {
