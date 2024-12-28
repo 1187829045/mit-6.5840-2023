@@ -10,7 +10,7 @@ import (
 
 // 一个实现单个 Raft 节点的 Go 对象
 type config struct {
-	mu          sync.Mutex            // 用于保护对共享资源的访问（例如，状态修改）
+	mu          sync.Mutex
 	t           *testing.T            // 测试对象，用于在测试失败时输出错误信息
 	finished    int32                 // 标记测试是否完成（可能用于并发控制）
 	net         *labrpc.Network       // 网络对象，管理 Raft 节点之间的通信
@@ -35,8 +35,7 @@ type config struct {
 type PeerTracker struct {
 	nextIndex  uint64
 	matchIndex uint64
-
-	lastAck time.Time
+	lastAck    time.Time
 }
 type Entry struct {
 	Term  int

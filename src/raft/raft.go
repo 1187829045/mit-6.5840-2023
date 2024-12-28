@@ -81,8 +81,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("节点%d收到节点%d的选票，args.Term ： %d,rf.currentTerm:%d,args.LastLogTerm :%d,rf.log[len(rf.log)-1].Term:%d",
-		rf.me, args.CandidateId, args.Term, rf.currentTerm, args.LastLogTerm, rf.log[len(rf.log)-1].Term)
+	DPrintf("节点%d收到节点%d的选票，args.Term ： %d,rf.currentTerm:%d,"+
+		"args.LastLogTerm :%d,rf.log[len(rf.log)-1].Term:%d",
+		rf.me, args.CandidateId, args.Term, rf.currentTerm,
+		args.LastLogTerm, rf.log[len(rf.log)-1].Term)
 
 	if args.Term <= rf.currentTerm {
 		DPrintf("节点%d比请求节点任期大于等于返回false", rf.me)
@@ -292,7 +294,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.peers = peers
 	rf.persister = persister
 	rf.me = me
-
 	// 初始化代码（用于 2A, 2B, 2C）。
 	rf.commitIndex = 0
 	rf.lastApplied = 0
