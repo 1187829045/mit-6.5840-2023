@@ -23,6 +23,30 @@ import "encoding/base64"
 import "time"
 import "fmt"
 
+// 一个实现单个 Raft 节点的 Go 对象
+type config struct {
+	mu          sync.Mutex            // 用于保护对共享资源的访问（例如，状态修改）
+	t           *testing.T            // 测试对象，用于在测试失败时输出错误信息
+	finished    int32                 // 标记测试是否完成（可能用于并发控制）
+	net         *labrpc.Network       // 网络对象，管理 Raft 节点之间的通信
+	n           int                   // Raft 集群中的节点数量
+	rafts       []*Raft               // Raft 节点的切片，保存每个节点的 Raft 实例
+	applyErr    []string              // 存储应用通道的错误信息
+	connected   []bool                // 标记每个节点是否与网络连接
+	saved       []*Persister          // 每个节点的持久化存储，保存 Raft 状态
+	endnames    [][]string            // 每个节点发送到其他节点的端口文件名
+	logs        []map[int]interface{} // 每个节点已提交日志条目的副本
+	lastApplied []int                 // 每个节点最后应用的日志条目的索引
+	start       time.Time             // 调用 make_config() 时的时间，标记配置开始的时间
+	// 以下为 begin()/end() 统计信息
+	t0        time.Time // 测试开始时的时间（在 test_test.go 中调用 cfg.begin()）
+	rpcs0     int       // 测试开始时的总 RPC 调用次数
+	cmds0     int       // 测试开始时达成一致的命令数量
+	bytes0    int64     // 测试开始时传输的字节数
+	maxIndex  int       // 当前最大日志索引
+	maxIndex0 int       // 测试开始时的最大日志索引
+}
+
 func randstring(n int) string {
 	b := make([]byte, 2*n)
 	crand.Read(b)
@@ -127,6 +151,9 @@ func (cfg *config) crash1(i int) {
 		cfg.saved[i].Save(raftlog, snapshot)
 	}
 }
+
+// 作用是：检查每个节点的相同下标的日志的命令是否完全一致（如果不一致返回值错误信息，第一个返回值），并将i这个
+//节点的 m.CommandIndex这个索引的命令设置为m.并更新最大索引，并返回m.CommandIndex是不是下标为0(第二个返回值)
 
 func (cfg *config) checkLogs(i int, m ApplyMsg) (string, bool) {
 	err_msg := ""
@@ -375,8 +402,7 @@ func (cfg *config) connect(i int) {
 
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
-	//fmt.Printf("disconnect(%d)\n", i)
-
+	fmt.Printf("disconnect(%d)\n", i)
 	cfg.connected[i] = false
 
 	// outgoing ClientEnds
@@ -422,13 +448,13 @@ func (cfg *config) setlongreordering(longrel bool) {
 //
 // try a few times in case re-elections are needed.
 func (cfg *config) checkOneLeader() int {
-	//fmt.Println("-------------------------------------------------------------")
 	// 进行最多 10 次迭代检查是否存在唯一的 leader。
+	fmt.Println("进行最多 10 次迭代检查是否存在唯一的 leader。")
 	for iters := 0; iters < 10; iters++ {
+		fmt.Printf("第%d次检查\n", iters+1)
 		// 随机休眠 450-550 毫秒，模拟网络延迟或系统状态变化。
 		ms := 450 + (rand.Int63() % 100)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
-
 		// 创建一个 map，用于记录每个任期 (term) 下的领导者节点 ID。
 		leaders := make(map[int][]int)
 		for i := 0; i < cfg.n; i++ { // 遍历所有节点。
@@ -440,7 +466,6 @@ func (cfg *config) checkOneLeader() int {
 				}
 			}
 		}
-
 		// 记录最近一个拥有 leader 的任期。
 		lastTermWithLeader := -1
 		for term, leaders := range leaders { // 遍历每个任期的领导者列表。
@@ -494,19 +519,34 @@ func (cfg *config) checkNoLeader() {
 }
 
 // how many servers think a log entry is committed?
+// 输入为提交项的索引，从1开始
+// 作用：检查每个节点的index下标的日志是否相同，返回有多少个节点认为
+// 第index数据已经提交，以及提交的日志项
 func (cfg *config) nCommitted(index int) (int, interface{}) {
 	count := 0
+	// 一个用来记录在index上各个实例存储的相同的日志项
 	var cmd interface{} = nil
+	// 遍历raft实例
 	for i := 0; i < len(cfg.rafts); i++ {
+		// cfg.applyErr数组负责存储 ”捕捉错误的协程“ 收集到的错误，
+		//如果不空，则说明捕捉到异常
 		if cfg.applyErr[i] != "" {
 			cfg.t.Fatal(cfg.applyErr[i])
 		}
 
 		cfg.mu.Lock()
+		// logs[i][index]负责存储检测线程提取到的每一个raft节点所有的提交项，
+		//i是实例id，index是测试程序生成的日志项，
+		// 如果某一个日志项在所有节点上的index位置上都被提交了，
+		//则有logs[0][index]==logs[1][index]==logs[2][index]=...
+		//==logs[n-1][index]
 		cmd1, ok := cfg.logs[i][index]
 		cfg.mu.Unlock()
-
 		if ok {
+			// 相反如果在index这个位置上有一个实例填充了数据（视为提交）但是不与其他实例相同，
+			//则会发生不匹配的现象，抛异常
+			// 如果某一个实例没有在这个位置上填充数据（等同没有提交），则cfg.logs[i][index]
+			//的ok为false，此时虽然也不匹配但是不会抛异常
 			if count > 0 && cmd != cmd1 {
 				cfg.t.Fatalf("committed values do not match: index %v, %v, %v",
 					index, cmd, cmd1)
@@ -515,7 +555,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 			cmd = cmd1
 		}
 	}
-	return count, cmd
+	return count, cmd // 返回有多少个节点认为第index数据已经提交，以及提交的日志项
 }
 
 // wait for at least n servers to commit.
@@ -550,20 +590,33 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 }
 
 // do a complete agreement.
-// it might choose the wrong leader initially,
-// and have to re-submit after giving up.
+// it might choose the wrong leader initially,and have to re-submit after giving up.
 // entirely gives up after about 10 seconds.
-// indirectly checks that the servers agree on the
-// same value, since nCommitted() checks this,
+// indirectly checks that the servers agree on the same value, since nCommitted() checks this,
 // as do the threads that read from applyCh.
 // returns index.
 // if retry==true, may submit the command multiple
 // times, in case a leader fails just after Start().
 // if retry==false, calls Start() only once, in order
 // to simplify the early Lab 2B tests.
+
+//完成整个协议。 它可能会在初始时选择错误的领导者，并且在放弃后需要重新提交。
+//最终会在大约 10 秒后完全放弃。 间接检查服务器是否达成一致，
+//因为 nCommitted() 会检查这一点，
+//和从 applyCh 中读取的线程也会检查。 返回索引。 如果 retry==true，可能会多次提交命令，
+//以防领导者在 Start() 之后失败。 如果 retry==false，仅调用一次 Start()，
+//以简化早期的 Lab 2B 测试。
+
+// 该方法的返回值是一个各个节点存储同一个日志项时放置的位置索引，它用于确定生产日志时
+// 的顺序是否和
+// 多数节点放置该日志的顺序一致。如果一致则说明存储位置正确，否则抛异常。
 func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 	t0 := time.Now()
 	starts := 0
+	// 10s内每隔50m循环检查，如果cfg节点没有挂掉（cfg.checkFinished==false）
+	//就持续检测直到找到一个成为leader的节点，
+	// 然后取到start函数生成的日志项在这个leader中日志数组的位置index，
+	//然后再利用这个index去确认有多少从节点也复制并且提交了这个日志项
 	for time.Since(t0).Seconds() < 10 && cfg.checkFinished() == false {
 		// try all the servers, maybe one is the leader.
 		index := -1
@@ -576,6 +629,8 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			}
 			cfg.mu.Unlock()
 			if rf != nil {
+				//rf的start函数，会返回该日志项在leader节点中的日志数组的
+				//索引位置，任期以及是否是leader，如果找到了leader则break
 				index1, _, ok := rf.Start(cmd)
 				if ok {
 					index = index1
@@ -583,22 +638,27 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				}
 			}
 		}
-
+		// index不等于-1则表示找到了一个存储了cmd日志项的leader节点
 		if index != -1 {
 			// somebody claimed to be the leader and to have
 			// submitted our command; wait a while for agreement.
 			t1 := time.Now()
+			// 下面这个循环的意思是每隔20ms就轮询一次已经提交内容为cmd的日志项的节点数量是否大于等于expectedServers
+			// 为什么是2s内呢？因为正常情况下2s内一定能确认所有的节点都能够提交成功
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := cfg.nCommitted(index)
+				// 如果是则比较在这个索引位置上各节点提交的日志是否和给定的日志相同，如果相同直接返回索引
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {
+						// 返回index是为了确认各个节点提交的索引位置是否和start生成的顺序是否一致
 						// and it was the command we submitted.
 						return index
 					}
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
+			// 如果不是则看是否重试，不允许重试就抛异常
 			if retry == false {
 				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 			}
@@ -607,6 +667,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 		}
 	}
 	if cfg.checkFinished() == false {
+		// 如果在
 		cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 	}
 	return -1
