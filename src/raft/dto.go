@@ -2,9 +2,35 @@ package raft
 
 import (
 	"6.5840/labrpc"
+	"math/rand"
 	"sync"
+	"testing"
 	"time"
 )
+
+// 一个实现单个 Raft 节点的 Go 对象
+type Config struct {
+	mu          sync.Mutex
+	t           *testing.T            // 测试对象，用于在测试失败时输出错误信息
+	finished    int32                 // 标记测试是否完成（可能用于并发控制）
+	net         *labrpc.Network       // 网络对象，管理 Raft 节点之间的通信
+	n           int                   // Raft 集群中的节点数量
+	rafts       []*Raft               // Raft 节点的切片，保存每个节点的 Raft 实例
+	applyErr    []string              // 存储应用通道的错误信息
+	connected   []bool                // 标记每个节点是否与网络连接
+	saved       []*Persister          // 每个节点的持久化存储，保存 Raft 状态
+	endnames    [][]string            // 每个节点发送到其他节点的端口文件名
+	logs        []map[int]interface{} // 每个节点已提交日志条目的副本
+	lastApplied []int                 // 每个节点最后应用的日志条目的索引
+	start       time.Time             // 调用 make_config() 时的时间，标记配置开始的时间
+	// 以下为 begin()/end() 统计信息
+	t0        time.Time // 测试开始时的时间（在 test_test.go 中调用 cfg.begin()）
+	rpcs0     int       // 测试开始时的总 RPC 调用次数
+	cmds0     int       // 测试开始时达成一致的命令数量
+	bytes0    int64     // 测试开始时传输的字节数
+	maxIndex  int       // 当前最大日志索引
+	maxIndex0 int       // 测试开始时的最大日志索引
+}
 
 type PeerTracker struct {
 	nextIndex  int
@@ -85,10 +111,11 @@ type RequestVoteReply struct {
 	VoteGranted bool
 }
 type AppendEntriesArgs struct {
-	Term         int     //领导者的 任期
-	LeaderId     int     // 领导者的 ID。
-	PrevLogIndex int     // 紧邻新日志条目的索引
-	PrevLogTerm  int     // 紧邻新日志条目的term
+	Term         int //领导者的 任期
+	LeaderId     int // 领导者的 ID。
+	PrevLogIndex int // 紧邻新日志条目的索引
+	PrevLogTerm  int // 紧邻新日志条目的term
+
 	Entries      []Entry //需要存储的日志条目（心跳时为空）。
 	LeaderCommit int     //领导者的 commitIndex。
 }
@@ -98,4 +125,40 @@ type AppendEntriesReply struct {
 	Success      bool
 	PrevLogIndex int
 	PrevLogTerm  int
+}
+
+func (rf *Raft) IsHeartTimeOut() bool {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return time.Since(rf.lastHeartbeat) > rf.heartbeatTimeout
+}
+
+func (rf *Raft) ResetHeartbeatTime() {
+	rf.lastHeartbeat = time.Now()
+}
+
+func (rf *Raft) IsElectionTimeout() bool {
+
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return time.Since(rf.lastElection) > rf.electionTimeout
+}
+
+func (rf *Raft) ResetElectionTime() {
+	rf.lastElection = time.Now()
+	electionTimeout := ElectionTimeoutBase + (rand.Int63() % ElectionTimeoutBase)
+	rf.electionTimeout = time.Duration(electionTimeout) * time.Millisecond //300--600
+	DPrintf("节点%d刷新选举时间,超时时间是%d", rf.me, electionTimeout)
+}
+func (rf *Raft) becomeCandidate() {
+	rf.state = Candidate
+	rf.currentTerm++
+	rf.votedFor = rf.me
+	rf.ResetElectionTime()
+}
+
+func (rf *Raft) becomeLeader() {
+	rf.state = Leader
+	rf.resetTrackedIndex()
+
 }

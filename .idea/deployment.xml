@@ -1,12 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="192.168.128.128" confirmBeforeUploading="false" autoUploadExternalChanges="true">
+  <component name="PublishConfigData" autoUpload="Always" serverName="192.168.128.128" confirmBeforeUploading="false" confirmBeforeDeletion="false" autoUploadExternalChanges="true">
+    <option name="confirmBeforeDeletion" value="false" />
     <option name="confirmBeforeUploading" value="false" />
     <serverData>
       <paths name="192.168.128.128">
         <serverdata>
           <mappings>
             <mapping deploy="/home/llb/mit6.5840-2023spring" local="$PROJECT_DIR$" web="/home/llb/mit6.5840-2023spring" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="远程主机 (c26a155b-4922-4ede-9f4b-296fdbb1d789)">
+        <serverdata>
+          <mappings>
+            <mapping local="$PROJECT_DIR$" web="/" />
           </mappings>
         </serverdata>
       </paths>
