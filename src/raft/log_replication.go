@@ -6,6 +6,11 @@ func (rf *Raft) StartAppendEntries(heart bool) {
 	// 并行向其他节点发送心跳或者日志，让他们知道此刻已经有一个leader产生
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	if heart == false {
+		DPrintf("节点%d开始发起日志复制", rf.me)
+	} else {
+		DPrintf("节点%d开始发起心跳", rf.me)
+	}
 	if rf.state != Leader {
 		return
 	}
@@ -30,7 +35,7 @@ func (rf *Raft) AppendEntries(targetServerId int, heart bool) {
 		rf.ResetHeartbeatTime()
 		rf.mu.Lock() //也取消defer unlock
 		if rf.state != Leader {
-			DPrintf("当前节点%d不是Leader", rf.me)
+			//DPrintf("当前节点%d不是Leader", rf.me)
 			rf.mu.Unlock()
 			return
 		}
@@ -84,13 +89,13 @@ func (rf *Raft) AppendEntries(targetServerId int, heart bool) {
 		DPrintf("节点%d向节点%d发起日志复制", rf.me, targetServerId)
 		ok := rf.sendRequestAppendEntries(false, targetServerId, &args, &reply)
 		if !ok {
-			DPrintf("调用函数失败")
+			//DPrintf("调用函数失败")
 			return
 		}
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
 		if rf.state != Leader {
-			DPrintf("当前不是leader节点")
+			//DPrintf("当前不是leader节点")
 			return
 		}
 		// 丢弃旧的rpc响应
@@ -112,7 +117,6 @@ func (rf *Raft) AppendEntries(targetServerId int, heart bool) {
 		}
 		//两种情况，一个是prelogIndex>lastlogIndex 或者prelogIndex  这个索引的人气不一致
 		rf.peerTrackers[targetServerId].nextIndex = reply.PrevLogIndex + 1
-
 	}
 
 }
@@ -206,6 +210,8 @@ func (rf *Raft) HandleAppendEntriesRPC(args *AppendEntriesArgs, reply *AppendEnt
 		} else {
 			rf.commitIndex = rf.log.LastLogIndex
 		}
+		//DPrintf("开启广播")
+		rf.applyCond.Broadcast()
 	}
 	reply.Term = rf.currentTerm
 	reply.Success = true
@@ -215,22 +221,27 @@ func (rf *Raft) HandleAppendEntriesRPC(args *AppendEntriesArgs, reply *AppendEnt
 
 // 主节点对日志进行提交，其条件是多余一半的从节点的commitIndex>=leader节点当前提交的commitIndex
 func (rf *Raft) tryCommitL(matchIndex int) {
-
 	if matchIndex <= rf.commitIndex {
 		// 首先matchIndex应该是大于leader节点的commitIndex才能提交，因为commitIndex及其之前的不需要更新
+		DPrintf(" matchIndex <= rf.commitIndex")
 		return
 	}
 	// 越界的也不能提交
 	if matchIndex > rf.log.LastLogIndex {
+		DPrintf("  matchIndex > rf.log.LastLogIndex")
 		return
 	}
 	// 提交的必须本任期内从客户端收到的日志
 	if rf.getEntryTerm(matchIndex) != rf.currentTerm {
+		DPrintf(" rf.getEntryTerm(matchIndex) != rf.currentTerm")
 		return
 	}
 	// 计算所有已经正确匹配该matchIndex的从节点的票数
-	cnt := 0 //自动计算上leader节点的一票
+	cnt := 1 //自动计算上leader节点的一票
 	for i := 0; i < len(rf.peers); i++ {
+		if i == rf.me {
+			continue
+		}
 		if matchIndex <= rf.peerTrackers[i].matchIndex {
 			cnt++
 		}
@@ -240,5 +251,9 @@ func (rf *Raft) tryCommitL(matchIndex int) {
 		if rf.commitIndex > rf.log.LastLogIndex {
 			panic("")
 		}
+		DPrintf("对日志进行提交")
+		rf.applyCond.Broadcast() // 通知对应的applier协程将日志放到状态机上验证
+	} else {
+		DPrintf("未超过半数节点在此索引上的日志相等，拒绝提交....")
 	}
 }

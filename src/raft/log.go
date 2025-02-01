@@ -12,9 +12,10 @@ type Log struct {
 
 func NewLog() *Log {
 	entries := make([]Entry, 0)
+	entries = append(entries, Entry{Term: -1, Command: nil})
 	return &Log{
 		Entries:      entries,
-		LastLogIndex: -1,
+		LastLogIndex: 0,
 	}
 }
 func (log *Log) getOneEntry(index int) *Entry {

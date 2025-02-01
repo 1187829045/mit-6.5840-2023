@@ -5,10 +5,8 @@ func (rf *Raft) StartElection() {
 	//2.为自己投票，更新状态为候选者
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf("节点%d选举超时开始选举任期是%d,当前的状态是%d", rf.me, rf.currentTerm+1, rf.state)
+	//DPrintf("节点%d选举超时开始选举任期是%d,当前的状态是%d", rf.me, rf.currentTerm+1, rf.state)
 	if rf.state == Leader {
-		// 如果是leader，则应该不应该进行选举
-		DPrintf("节点%d是Leader不再选举", rf.me)
 		return
 	}
 	rf.becomeCandidate()
@@ -28,13 +26,13 @@ func (rf *Raft) StartElection() {
 			var reply RequestVoteReply
 			ok := rf.sendRequestVote(serverId, &args, &reply)
 			if !ok || !reply.VoteGranted {
-				DPrintf("调用函数失败")
+				//DPrintf("调用函数失败")
 				return
 			}
 			rf.mu.Lock()
 			defer rf.mu.Unlock()
 			if reply.Term < rf.currentTerm {
-				DPrintf(" reply.Term < rf.currentTerm")
+				//DPrintf(" reply.Term < rf.currentTerm")
 				return
 			}
 			// 统计票数
@@ -62,7 +60,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VoteGranted = true // 默认设置响应体为投同意票状态
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
-		DPrintf("节点%d比请求节点%d任期大于返回false", rf.me, args.CandidateId)
+		//DPrintf("节点%d比请求节点%d任期大于返回false", rf.me, args.CandidateId)
 		reply.VoteGranted = false
 		return
 	}
@@ -70,7 +68,6 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.currentTerm = args.Term
 		reply.Term = rf.currentTerm
 		rf.votedFor = NoVote //需要设置为noVote
-		rf.state = Follower  // 这里暂时添加看是否正确
 	}
 	// candidate节点发送过来的日志索引以及任期必须大于等于自己的日志索引及任期
 	update := false
@@ -81,10 +78,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		//竞选任期大于自身任期，则更新自身任期，并转为follower
 		rf.votedFor = args.CandidateId
 		rf.state = Follower
-		DPrintf("节点%d同意%d成为leader", rf.me, args.CandidateId)
+		//DPrintf("节点%d同意%d成为leader", rf.me, args.CandidateId)
 		rf.ResetElectionTime()
 	} else {
 		reply.VoteGranted = false
-		DPrintf("节点%d拒绝%d成为leader,rf.votedFor = %d", rf.me, args.CandidateId, rf.votedFor)
+		//DPrintf("节点%d拒绝%d成为leader,rf.votedFor = %d", rf.me, args.CandidateId, rf.votedFor)
 	}
 }

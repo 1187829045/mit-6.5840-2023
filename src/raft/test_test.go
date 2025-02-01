@@ -130,11 +130,9 @@ func TestBasicAgree2B(t *testing.T) {
 	servers := 3
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
-
 	cfg.begin("Test (2B): basic agreement")
-
 	iters := 3
-	for index := 1; index < iters+1; index++ {
+	for index := 1; index < iters+1; index++ { // 1 2 3
 		nd, _ := cfg.nCommitted(index)
 		if nd > 0 {
 			t.Fatalf("some have committed before Start()")
@@ -145,7 +143,6 @@ func TestBasicAgree2B(t *testing.T) {
 			t.Fatalf("got index %v but expected %v", xindex, index)
 		}
 	}
-
 	cfg.end()
 }
 

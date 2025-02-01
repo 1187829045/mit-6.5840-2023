@@ -523,11 +523,13 @@ func (cfg *config) checkNoLeader() {
 // 作用：检查每个节点的index下标的日志是否相同，返回有多少个节点认为
 // 第index数据已经提交，以及提交的日志项
 func (cfg *config) nCommitted(index int) (int, interface{}) {
+	DPrintf("this is nCommitted")
 	count := 0
 	// 一个用来记录在index上各个实例存储的相同的日志项
 	var cmd interface{} = nil
 	// 遍历raft实例
 	for i := 0; i < len(cfg.rafts); i++ {
+		DPrintf("检查节点%d下标%d日志是否一致", i, index)
 		// cfg.applyErr数组负责存储 ”捕捉错误的协程“ 收集到的错误，
 		//如果不空，则说明捕捉到异常
 		if cfg.applyErr[i] != "" {
@@ -547,12 +549,15 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 			//则会发生不匹配的现象，抛异常
 			// 如果某一个实例没有在这个位置上填充数据（等同没有提交），则cfg.logs[i][index]
 			//的ok为false，此时虽然也不匹配但是不会抛异常
+			DPrintf("节点%d下标%d日志是 %T %v", i, index, cmd1, cmd1)
 			if count > 0 && cmd != cmd1 {
 				cfg.t.Fatalf("committed values do not match: index %v, %v, %v",
 					index, cmd, cmd1)
 			}
 			count += 1
 			cmd = cmd1
+		} else {
+			DPrintf("cfg.logs[%d][%d]为空", i, index)
 		}
 	}
 	return count, cmd // 返回有多少个节点认为第index数据已经提交，以及提交的日志项
@@ -611,14 +616,18 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 // 的顺序是否和
 // 多数节点放置该日志的顺序一致。如果一致则说明存储位置正确，否则抛异常。
 func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
+	DPrintf("this is one")
 	t0 := time.Now()
 	starts := 0
 	// 10s内每隔50m循环检查，如果cfg节点没有挂掉（cfg.checkFinished==false）
 	//就持续检测直到找到一个成为leader的节点，
 	// 然后取到start函数生成的日志项在这个leader中日志数组的位置index，
 	//然后再利用这个index去确认有多少从节点也复制并且提交了这个日志项
+	count := 0 // 自己加的后面删
 	for time.Since(t0).Seconds() < 10 && cfg.checkFinished() == false {
 		// try all the servers, maybe one is the leader.
+		count++                       // 自己加的后面删
+		DPrintf("One函数第%d次检查", count) // 自己加的后面删
 		index := -1
 		for si := 0; si < cfg.n; si++ {
 			starts = (starts + 1) % cfg.n
@@ -634,6 +643,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				index1, _, ok := rf.Start(cmd)
 				if ok {
 					index = index1
+					DPrintf("找到Leader节点,LastLogIndex下标是%d,break ", index1)
 					break
 				}
 			}
@@ -645,7 +655,10 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			// 下面这个循环的意思是每隔20ms就轮询一次已经提交内容为cmd的日志项的节点数量是否大于等于expectedServers
 			// 为什么是2s内呢？因为正常情况下2s内一定能确认所有的节点都能够提交成功
+			count1 := 0 //自己加的
 			for time.Since(t1).Seconds() < 2 {
+				count1++
+				DPrintf("第%d次检查下标%d日志是否一致", count1, index)
 				nd, cmd1 := cfg.nCommitted(index)
 				// 如果是则比较在这个索引位置上各节点提交的日志是否和给定的日志相同，如果相同直接返回索引
 				if nd > 0 && nd >= expectedServers {

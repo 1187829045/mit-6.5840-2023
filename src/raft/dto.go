@@ -63,6 +63,9 @@ type Raft struct {
 	lastHeartbeat    time.Time     // 上一次的心跳时间，用于配合since方法计算当前的心跳时间是否超时
 	peerTrackers     []PeerTracker //从节点的状态
 	log              *Log
+
+	applyHelper *ApplyHelper
+	applyCond   *sync.Cond
 }
 
 // 每当一个新的日志条目被提交时，Raft 节点需要通过 applyCh 发送 ApplyMsg。
@@ -148,7 +151,7 @@ func (rf *Raft) ResetElectionTime() {
 	rf.lastElection = time.Now()
 	electionTimeout := ElectionTimeoutBase + (rand.Int63() % ElectionTimeoutBase)
 	rf.electionTimeout = time.Duration(electionTimeout) * time.Millisecond //300--600
-	DPrintf("节点%d刷新选举时间,超时时间是%d", rf.me, electionTimeout)
+	//DPrintf("节点%d刷新选举时间,超时时间是%d", rf.me, electionTimeout)
 }
 func (rf *Raft) becomeCandidate() {
 	rf.state = Candidate
@@ -158,6 +161,7 @@ func (rf *Raft) becomeCandidate() {
 }
 
 func (rf *Raft) becomeLeader() {
+	DPrintf("节点%d成为Leader", rf.me)
 	rf.state = Leader
 	rf.resetTrackedIndex()
 

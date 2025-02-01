@@ -13,6 +13,7 @@ package raft
 //   将一个 ApplyMsg 发送到服务（或测试器）。
 
 import (
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -106,13 +107,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	index := -1
 	term := -1
 	isLeader := true
-
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	// 你的代码（用于 2B）。
 	if rf.state != Leader {
 		isLeader = false
 		return index, term, isLeader
 	}
+	term = rf.currentTerm
 	rf.log.appendEntry(Entry{term, command})
+	DPrintf("当前节点调用了Start函数,当前LastLogIndex是%d,Command是%T %v ", rf.log.LastLogIndex, command, command)
 	go rf.StartAppendEntries(false)
 	return rf.log.LastLogIndex, rf.currentTerm, isLeader
 }
@@ -123,8 +127,12 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 
 func (rf *Raft) Kill() {
 	atomic.StoreInt32(&rf.dead, 1)
-	// 可选：你的代码
 
+	// Your code here, if desired.
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	rf.applyHelper.Kill()
+	rf.state = Follower
 }
 
 func (rf *Raft) killed() bool {
@@ -183,8 +191,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.persister = persister
 	rf.me = me
 	// 初始化代码（用于 2A, 2B, 2C）。
-	rf.commitIndex = -1
-	rf.lastApplied = -1
+	rf.commitIndex = 0
+	rf.lastApplied = 0
 	rf.state = Candidate
 	rf.currentTerm = 0
 	rf.votedFor = NoVote
@@ -194,8 +202,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.log = NewLog()
 	// 从持久化状态恢复
 	rf.readPersist(persister.ReadRaftState())
+	rf.applyHelper = NewApplyHelper(applyCh, rf.lastApplied)
+	rf.applyCond = sync.NewCond(&rf.mu)
 	// 启动 ticker goroutine 以启动选举
 	go rf.ticker()
 	DPrintf("第%d节点初始化完毕,任期是%d", rf.me, rf.currentTerm)
+	go rf.sendMsgToTester() // 供config协程追踪日志以测试
 	return rf
 }
