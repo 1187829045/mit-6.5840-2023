@@ -23,30 +23,6 @@ import "encoding/base64"
 import "time"
 import "fmt"
 
-// 一个实现单个 Raft 节点的 Go 对象
-type config struct {
-	mu          sync.Mutex            // 用于保护对共享资源的访问（例如，状态修改）
-	t           *testing.T            // 测试对象，用于在测试失败时输出错误信息
-	finished    int32                 // 标记测试是否完成（可能用于并发控制）
-	net         *labrpc.Network       // 网络对象，管理 Raft 节点之间的通信
-	n           int                   // Raft 集群中的节点数量
-	rafts       []*Raft               // Raft 节点的切片，保存每个节点的 Raft 实例
-	applyErr    []string              // 存储应用通道的错误信息
-	connected   []bool                // 标记每个节点是否与网络连接
-	saved       []*Persister          // 每个节点的持久化存储，保存 Raft 状态
-	endnames    [][]string            // 每个节点发送到其他节点的端口文件名
-	logs        []map[int]interface{} // 每个节点已提交日志条目的副本
-	lastApplied []int                 // 每个节点最后应用的日志条目的索引
-	start       time.Time             // 调用 make_config() 时的时间，标记配置开始的时间
-	// 以下为 begin()/end() 统计信息
-	t0        time.Time // 测试开始时的时间（在 test_test.go 中调用 cfg.begin()）
-	rpcs0     int       // 测试开始时的总 RPC 调用次数
-	cmds0     int       // 测试开始时达成一致的命令数量
-	bytes0    int64     // 测试开始时传输的字节数
-	maxIndex  int       // 当前最大日志索引
-	maxIndex0 int       // 测试开始时的最大日志索引
-}
-
 func randstring(n int) string {
 	b := make([]byte, 2*n)
 	crand.Read(b)
@@ -59,6 +35,29 @@ func makeSeed() int64 {
 	bigx, _ := crand.Int(crand.Reader, max)
 	x := bigx.Int64()
 	return x
+}
+
+type config struct {
+	mu          sync.Mutex
+	t           *testing.T
+	finished    int32
+	net         *labrpc.Network
+	n           int
+	rafts       []*Raft
+	applyErr    []string // from apply channel readers
+	connected   []bool   // whether each server is on the net
+	saved       []*Persister
+	endnames    [][]string            // the port file names each sends to
+	logs        []map[int]interface{} // copy of each server's committed entries
+	lastApplied []int
+	start       time.Time // time at which make_config() was called
+	// begin()/end() statistics
+	t0        time.Time // time at which test_test.go called cfg.begin()
+	rpcs0     int       // rpcTotal() at start of test
+	cmds0     int       // number of agreements
+	bytes0    int64
+	maxIndex  int
+	maxIndex0 int
 }
 
 var ncpu_once sync.Once
@@ -379,7 +378,7 @@ func (cfg *config) cleanup() {
 
 // attach server i to the net.
 func (cfg *config) connect(i int) {
-	// fmt.Printf("connect(%d)\n", i)
+	fmt.Printf("connect(%d)\n", i)
 
 	cfg.connected[i] = true
 
@@ -523,13 +522,13 @@ func (cfg *config) checkNoLeader() {
 // 作用：检查每个节点的index下标的日志是否相同，返回有多少个节点认为
 // 第index数据已经提交，以及提交的日志项
 func (cfg *config) nCommitted(index int) (int, interface{}) {
-	DPrintf("this is nCommitted")
+	DPrintf(111, "this is nCommitted")
 	count := 0
 	// 一个用来记录在index上各个实例存储的相同的日志项
 	var cmd interface{} = nil
 	// 遍历raft实例
 	for i := 0; i < len(cfg.rafts); i++ {
-		DPrintf("检查节点%d下标%d日志是否一致", i, index)
+		DPrintf(111, "检查节点%d下标%d日志是否一致", i, index)
 		// cfg.applyErr数组负责存储 ”捕捉错误的协程“ 收集到的错误，
 		//如果不空，则说明捕捉到异常
 		if cfg.applyErr[i] != "" {
@@ -549,7 +548,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 			//则会发生不匹配的现象，抛异常
 			// 如果某一个实例没有在这个位置上填充数据（等同没有提交），则cfg.logs[i][index]
 			//的ok为false，此时虽然也不匹配但是不会抛异常
-			DPrintf("节点%d下标%d日志是 %T %v", i, index, cmd1, cmd1)
+			DPrintf(111, "节点%d下标%d日志是 %T %v", i, index, cmd1, cmd1)
 			if count > 0 && cmd != cmd1 {
 				cfg.t.Fatalf("committed values do not match: index %v, %v, %v",
 					index, cmd, cmd1)
@@ -557,7 +556,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 			count += 1
 			cmd = cmd1
 		} else {
-			DPrintf("cfg.logs[%d][%d]为空", i, index)
+			DPrintf(111, "cfg.logs[%d][%d]为空", i, index)
 		}
 	}
 	return count, cmd // 返回有多少个节点认为第index数据已经提交，以及提交的日志项
@@ -616,7 +615,7 @@ func (cfg *config) wait(index int, n int, startTerm int) interface{} {
 // 的顺序是否和
 // 多数节点放置该日志的顺序一致。如果一致则说明存储位置正确，否则抛异常。
 func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
-	DPrintf("this is one")
+	DPrintf(111, "this is one")
 	t0 := time.Now()
 	starts := 0
 	// 10s内每隔50m循环检查，如果cfg节点没有挂掉（cfg.checkFinished==false）
@@ -626,8 +625,8 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 	count := 0 // 自己加的后面删
 	for time.Since(t0).Seconds() < 10 && cfg.checkFinished() == false {
 		// try all the servers, maybe one is the leader.
-		count++                       // 自己加的后面删
-		DPrintf("One函数第%d次检查", count) // 自己加的后面删
+		count++                            // 自己加的后面删
+		DPrintf(111, "One函数第%d次检查", count) // 自己加的后面删
 		index := -1
 		for si := 0; si < cfg.n; si++ {
 			starts = (starts + 1) % cfg.n
@@ -643,7 +642,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 				index1, _, ok := rf.Start(cmd)
 				if ok {
 					index = index1
-					DPrintf("找到Leader节点,LastLogIndex下标是%d,break ", index1)
+					DPrintf(111, "找到Leader节点是%d，任期是%d,LastLogIndex下标是%d,break ", rf.me, rf.currentTerm, index1)
 					break
 				}
 			}
@@ -658,7 +657,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			count1 := 0 //自己加的
 			for time.Since(t1).Seconds() < 2 {
 				count1++
-				DPrintf("第%d次检查下标%d日志是否一致", count1, index)
+				DPrintf(111, "第%d次检查下标%d日志是否一致", count1, index)
 				nd, cmd1 := cfg.nCommitted(index)
 				// 如果是则比较在这个索引位置上各节点提交的日志是否和给定的日志相同，如果相同直接返回索引
 				if nd > 0 && nd >= expectedServers {
@@ -673,6 +672,7 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			}
 			// 如果不是则看是否重试，不允许重试就抛异常
 			if retry == false {
+
 				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 			}
 		} else {

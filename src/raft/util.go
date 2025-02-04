@@ -7,14 +7,15 @@ import (
 )
 
 // Debugging
-const Debug = true
+const Debug_level = 1000
 
-func DPrintf(format string, a ...interface{}) (n int, err error) {
-	if Debug {
+func DPrintf(level int, format string, a ...interface{}) (n int, err error) {
+	if Debug_level <= level {
 		log.Printf(format, a...)
 	}
 	return
 }
+
 func max(a, b int) int {
 	if a > b {
 		return a
@@ -79,15 +80,15 @@ func (applyHelper *ApplyHelper) applier() {
 		msg := applyHelper.q[0]
 		applyHelper.q = applyHelper.q[1:]
 		applyHelper.mu.Unlock()
-		DPrintf("applyhelper start apply msg index=%v ", ifCond(msg.CommandValid, msg.CommandIndex, msg.SnapshotIndex))
+		DPrintf(8, "applyhelper start apply msg index=%v ", ifCond(msg.CommandValid, msg.CommandIndex, msg.SnapshotIndex))
 		applyHelper.applyCh <- msg
-		DPrintf("applyhelper done apply msg index=%v", ifCond(msg.CommandValid, msg.CommandIndex, msg.SnapshotIndex))
+		DPrintf(8, "applyhelper done apply msg index=%v", ifCond(msg.CommandValid, msg.CommandIndex, msg.SnapshotIndex))
 	}
 }
 func (applyHelper *ApplyHelper) tryApply(msg *ApplyMsg) bool {
 	applyHelper.mu.Lock()
 	defer applyHelper.mu.Unlock()
-	DPrintf("applyhelper 获得消息,下标是=%v", ifCond(msg.CommandValid, msg.CommandIndex, msg.SnapshotIndex))
+	DPrintf(100, "applyhelper get msg index=%v", ifCond(msg.CommandValid, msg.CommandIndex, msg.SnapshotIndex))
 	if msg.CommandValid {
 		if msg.CommandIndex <= applyHelper.lastItemIndex {
 			return true
@@ -110,24 +111,5 @@ func (applyHelper *ApplyHelper) tryApply(msg *ApplyMsg) bool {
 		return true
 	} else {
 		panic("applyHelper meet both invalid")
-	}
-}
-
-// 通知tester接收这个日志消息，然后供测试使用
-func (rf *Raft) sendMsgToTester() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	for !rf.killed() {
-		rf.applyCond.Wait()
-		for rf.lastApplied < rf.commitIndex {
-			i := rf.lastApplied + 1
-			rf.lastApplied++
-			msg := ApplyMsg{
-				CommandValid: true,
-				Command:      rf.log.getOneEntry(i).Command,
-				CommandIndex: i,
-			}
-			rf.applyHelper.tryApply(&msg)
-		}
 	}
 }

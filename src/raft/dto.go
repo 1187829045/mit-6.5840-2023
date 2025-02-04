@@ -2,167 +2,101 @@ package raft
 
 import (
 	"6.5840/labrpc"
-	"math/rand"
 	"sync"
-	"testing"
 	"time"
 )
 
-// 一个实现单个 Raft 节点的 Go 对象
-type Config struct {
-	mu          sync.Mutex
-	t           *testing.T            // 测试对象，用于在测试失败时输出错误信息
-	finished    int32                 // 标记测试是否完成（可能用于并发控制）
-	net         *labrpc.Network       // 网络对象，管理 Raft 节点之间的通信
-	n           int                   // Raft 集群中的节点数量
-	rafts       []*Raft               // Raft 节点的切片，保存每个节点的 Raft 实例
-	applyErr    []string              // 存储应用通道的错误信息
-	connected   []bool                // 标记每个节点是否与网络连接
-	saved       []*Persister          // 每个节点的持久化存储，保存 Raft 状态
-	endnames    [][]string            // 每个节点发送到其他节点的端口文件名
-	logs        []map[int]interface{} // 每个节点已提交日志条目的副本
-	lastApplied []int                 // 每个节点最后应用的日志条目的索引
-	start       time.Time             // 调用 make_config() 时的时间，标记配置开始的时间
-	// 以下为 begin()/end() 统计信息
-	t0        time.Time // 测试开始时的时间（在 test_test.go 中调用 cfg.begin()）
-	rpcs0     int       // 测试开始时的总 RPC 调用次数
-	cmds0     int       // 测试开始时达成一致的命令数量
-	bytes0    int64     // 测试开始时传输的字节数
-	maxIndex  int       // 当前最大日志索引
-	maxIndex0 int       // 测试开始时的最大日志索引
+// as each Raft peer becomes aware that successive log entries are
+// committed, the peer should send an ApplyMsg to the service (or
+// tester) on the same server, via the applyCh passed to Make(). set
+// CommandValid to true to indicate that the ApplyMsg contains a newly
+// committed log entry.
+//
+// in Lab 3 you'll want to send other kinds of messages (e.g.,
+// snapshots) on the applyCh; at that point you can add fields to
+// ApplyMsg, but set CommandValid to false for these other uses.
+type ApplyMsg struct {
+	CommandValid bool
+	Command      interface{}
+	CommandIndex int
+
+	// For 2D:
+	SnapshotValid bool
+	Snapshot      []byte
+	SnapshotTerm  int
+	SnapshotIndex int
 }
 
-type PeerTracker struct {
-	nextIndex  int
-	matchIndex int
-
-	lastAck time.Time
-}
-
-// 将 Raft 的持久化状态保存到稳定存储，
-// 在崩溃和重启后可以重新加载。
-// 参考论文 Figure 2 描述的持久化状态。
-
+// A Go object implementing a single Raft peer.
 type Raft struct {
-	mu        sync.Mutex          // 锁，用于保护共享状态
-	peers     []*labrpc.ClientEnd // 所有节点的 RPC 端点
-	persister *Persister          // 用于保存节点持久化状态
-	me        int                 // 当前节点在 peers[] 数组中的索引
-	dead      int32               // 节点是否被 Kill() 设置为死亡状态
+	mu        sync.Mutex          // Lock to protect shared access to this peer's state
+	peers     []*labrpc.ClientEnd // RPC end points of all peers
+	persister *Persister          // Object to hold this peer's persisted state
+	me        int                 // this peer's index into peers[]
+	dead      int32               // set by Kill()
 
-	// 你的数据字段（用于 2A, 2B, 2C）。
-	// 参考论文 Figure 2 描述的 Raft 节点状态。
-	commitIndex      int
-	lastApplied      int
+	// Your data here (2A, 2B, 2C).
+	// Look at the paper's Figure 2 for a description of what
+	// state a Raft server must maintain.
 	state            int           // 节点状态，Candidate-Follower-Leader
 	currentTerm      int           // 当前的任期
 	votedFor         int           // 投票给谁
 	heartbeatTimeout time.Duration // 心跳定时器
-	electionTimeout  time.Duration // 选举计时器
+	electionTimeout  time.Duration //选举计时器
 	lastElection     time.Time     // 上一次的选举时间，用于配合since方法计算当前的选举时间是否超时
 	lastHeartbeat    time.Time     // 上一次的心跳时间，用于配合since方法计算当前的心跳时间是否超时
-	peerTrackers     []PeerTracker //从节点的状态
-	log              *Log
+	peerTrackers     []PeerTracker // Leader专属：keeps track of each peer's next index, match index, etc.
+	log              *Log          // 日志记录
+
+	//Volatile state
+	commitIndex int // commitIndex是本机提交的
+	lastApplied int // lastApplied是该日志在所有的机器上都跑了一遍后才会更新？
 
 	applyHelper *ApplyHelper
 	applyCond   *sync.Cond
 }
 
-// 每当一个新的日志条目被提交时，Raft 节点需要通过 applyCh 发送 ApplyMsg。
-// 设置 CommandValid 为 true 表示 ApplyMsg 包含一个新的提交日志条目。
-//
-// 在 2D 部分你需要通过 applyCh 发送其他类型的消息（例如快照）。
-// 对于这些消息，设置 CommandValid 为 false。
-
-type ApplyMsg struct {
-	CommandValid bool        // 是否是有效的命令
-	Command      interface{} // 具体的命令
-	CommandIndex int         // 命令的索引
-
-	// 适用于 2D：
-	SnapshotValid bool   // 是否是有效的快照
-	Snapshot      []byte // 快照数据
-	SnapshotTerm  int    // 快照对应的任期号
-	SnapshotIndex int    // 快照的最后索引
+type RequestAppendEntriesArgs struct {
+	LeaderTerm   int // Leader的Term
+	LeaderId     int
+	PrevLogIndex int // 新日志条目的上一个日志的索引
+	PrevLogTerm  int // 新日志的上一个日志的任期
+	//Logs         []ApplyMsg // 需要被保存的日志条目,可能有多个
+	Entries      []Entry
+	LeaderCommit int // Leader已提交的最高的日志项目的索引
 }
 
-// RequestVote RPC 的请求参数结构。
-// 字段名必须以大写字母开头！
-
-type RequestVoteArgs struct {
-	// 你的数据（用于 2A, 2B）。
-	//term: 候选人的任期号。
-	//candidateId: 候选人 ID。
-	//lastLogIndex: 候选人最后日志条目的索引。
-	//lastLogTerm: 候选人最后日志条目的任期号。
-
-	Term         int
-	CandidateId  int
-	LastLogIndex int
-	LastLogTerm  int
-}
-
-// RequestVote RPC 的回复参数结构。
-// 字段名必须以大写字母开头！
-
-type RequestVoteReply struct {
-	// 你的数据（用于 2A）。
-	//term: 接收者的当前任期号（供候选人更新）。
-	//voteGranted: 是否投票支持候选人。
-
-	Term        int
-	VoteGranted bool
-}
-type AppendEntriesArgs struct {
-	Term         int //领导者的 任期
-	LeaderId     int // 领导者的 ID。
-	PrevLogIndex int // 紧邻新日志条目的索引
-	PrevLogTerm  int // 紧邻新日志条目的term
-
-	Entries      []Entry //需要存储的日志条目（心跳时为空）。
-	LeaderCommit int     //领导者的 commitIndex。
-}
-
-type AppendEntriesReply struct {
-	Term         int
-	Success      bool
+type RequestAppendEntriesReply struct {
+	FollowerTerm int  // Follower的Term,给Leader更新自己的Term
+	Success      bool // 是否推送成功
 	PrevLogIndex int
 	PrevLogTerm  int
 }
 
-func (rf *Raft) IsHeartTimeOut() bool {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return time.Since(rf.lastHeartbeat) > rf.heartbeatTimeout
+// example RequestVote RPC arguments structure.
+// field names must start with capital letters!
+type RequestVoteArgs struct {
+	// Your data here (2A, 2B).
+	Term        int // candidate’s term
+	CandidateId int //candidate requesting vote
+
+	LastLogIndex int // index of candidate’s last log entry (§5.4)
+	LastLogTerm  int //term of candidate’s last log entry
 }
 
-func (rf *Raft) ResetHeartbeatTime() {
-	rf.lastHeartbeat = time.Now()
+// example RequestVote RPC reply structure.
+// field names must start with capital letters!
+type RequestVoteReply struct {
+	// Your data here (2A).
+	Term        int
+	VoteGranted bool
 }
-
-func (rf *Raft) IsElectionTimeout() bool {
-
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	return time.Since(rf.lastElection) > rf.electionTimeout
+type Entry struct {
+	Term    int
+	Command interface{}
 }
-
-func (rf *Raft) ResetElectionTime() {
-	rf.lastElection = time.Now()
-	electionTimeout := ElectionTimeoutBase + (rand.Int63() % ElectionTimeoutBase)
-	rf.electionTimeout = time.Duration(electionTimeout) * time.Millisecond //300--600
-	//DPrintf("节点%d刷新选举时间,超时时间是%d", rf.me, electionTimeout)
-}
-func (rf *Raft) becomeCandidate() {
-	rf.state = Candidate
-	rf.currentTerm++
-	rf.votedFor = rf.me
-	rf.ResetElectionTime()
-}
-
-func (rf *Raft) becomeLeader() {
-	DPrintf("节点%d成为Leader", rf.me)
-	rf.state = Leader
-	rf.resetTrackedIndex()
-
+type Log struct {
+	Entries       []Entry
+	FirstLogIndex int
+	LastLogIndex  int
 }
