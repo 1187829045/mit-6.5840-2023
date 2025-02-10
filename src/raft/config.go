@@ -38,14 +38,15 @@ func makeSeed() int64 {
 }
 
 type config struct {
-	mu          sync.Mutex
-	t           *testing.T
-	finished    int32
-	net         *labrpc.Network
-	n           int
-	rafts       []*Raft
-	applyErr    []string // from apply channel readers
-	connected   []bool   // whether each server is on the net
+	mu        sync.Mutex
+	t         *testing.T
+	finished  int32
+	net       *labrpc.Network
+	n         int
+	rafts     []*Raft
+	applyErr  []string // from apply channel readers
+	connected []bool   // whether each server is on the net
+	// saved 保存了每个服务器对应的 Persister 对象，用于存储持久化状态。
 	saved       []*Persister
 	endnames    [][]string            // the port file names each sends to
 	logs        []map[int]interface{} // copy of each server's committed entries
@@ -119,18 +120,19 @@ func make_config(t *testing.T, n int, unreliable bool, snapshot bool) *config {
 	return cfg
 }
 
-// shut down a Raft server but save its persistent state.
+// 关闭一个 Raft 服务器，但保留其持久化状态。
 func (cfg *config) crash1(i int) {
+	DPrintf(99, "this is crash1")
 	cfg.disconnect(i)
-	cfg.net.DeleteServer(i) // disable client connections to the server.
+
+	// 禁止客户端连接到服务器。
+	cfg.net.DeleteServer(i)
 
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()
 
-	// a fresh persister, in case old instance
-	// continues to update the Persister.
-	// but copy old persister's content so that we always
-	// pass Make() the last persisted state.
+	// 一个新的持久化存储对象，以防旧实例仍然在更新 Persister。
+	// 但要复制旧 Persister 的内容，以确保我们始终将上次持久化的状态传递给 Make()。
 	if cfg.saved[i] != nil {
 		cfg.saved[i] = cfg.saved[i].Copy()
 	}
@@ -196,51 +198,87 @@ func (cfg *config) applier(i int, applyCh chan ApplyMsg) {
 	}
 }
 
+// 读取快照然后恢复状态机，这里的快照数据是持久化时产生的。
+// ingestSnap 用于将从服务器 i 收到的快照数据加载到测试配置中，
+// 并更新该服务器的已提交日志副本和 lastApplied 索引。
 // returns "" or error string
 func (cfg *config) ingestSnap(i int, snapshot []byte, index int) string {
+
 	if snapshot == nil {
+		// 如果传入的快照为 nil，则认为这是错误情况，终止程序运行。
 		log.Fatalf("nil snapshot")
-		return "nil snapshot"
+		return "nil snapshot" // 虽然 log.Fatalf 会退出，但为了语法完整性返回错误字符串。
 	}
+
+	// 使用快照字节数据创建一个缓冲区 r。
 	r := bytes.NewBuffer(snapshot)
+
+	// 创建 labgob 解码器 d，用于解码缓冲区中的快照数据。
 	d := labgob.NewDecoder(r)
+
+	// 定义变量 lastIncludedIndex，用于存放快照中包含的最后一个日志索引。
 	var lastIncludedIndex int
+	// 定义变量 xlog，用于存放快照中保存的日志条目（以 interface{} 切片存储）。
 	var xlog []interface{}
+
+	// 依次解码快照中的 lastIncludedIndex 和 xlog。
+	// 如果解码过程中发生错误，则打印错误信息并退出程序。
 	if d.Decode(&lastIncludedIndex) != nil ||
 		d.Decode(&xlog) != nil {
 		log.Fatalf("snapshot decode error")
 		return "snapshot Decode() error"
 	}
+
+	// 如果传入的 index 参数不为 -1，并且它与快照中解码出的 lastIncludedIndex 不匹配，
+	// 则说明该快照与预期的 SnapshotIndex 不一致，返回错误字符串。
 	if index != -1 && index != lastIncludedIndex {
 		err := fmt.Sprintf("server %v snapshot doesn't match m.SnapshotIndex", i)
 		return err
 	}
+
+	// 将该服务器 i 的日志记录清空，创建一个新的空映射，存放快照中的日志条目。
 	cfg.logs[i] = map[int]interface{}{}
+
+	// 遍历解码出来的日志条目数组 xlog，
+	// 将每个日志条目存入 cfg.logs[i] 中，索引从 0 开始递增。
 	for j := 0; j < len(xlog); j++ {
 		cfg.logs[i][j] = xlog[j]
 	}
+
+	// 更新该服务器 i 的 lastApplied 索引为快照中的最后包含日志的索引。
 	cfg.lastApplied[i] = lastIncludedIndex
+
+	// 返回空字符串，表示没有错误。
 	return ""
 }
 
-const SnapShotInterval = 10
+const SnapShotInterval = 10 // 没九条日志生成一个快照
 
 // periodically snapshot raft state
+// 参数:一个是节点id，第二个是ApplyMsg的通道
+//会从这个管道不断拿出数据来,然后分别对快照数据和日志数据分别处理
+//如果是快照数据会加载到测试配置中,并更新该服务器的已提交日志副本和 lastApplied 索引。
+//如果是命令也就是日志条目的话.会先检查命令下标处多个节点是否一样.并加入自己的日志数组中cfg.logs[i][m.CommandIndex] = v
+//每九条日志生成一个快照,然后调用将快照发送给节点 rf.Snapshot.
+
 func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	cfg.mu.Lock()
 	rf := cfg.rafts[i]
 	cfg.mu.Unlock()
 	if rf == nil {
-		return // ???
+		return
 	}
-
 	for m := range applyCh {
 		err_msg := ""
+		// 快照有效就读快照
 		if m.SnapshotValid {
 			cfg.mu.Lock()
+			// ingestSnap 用于将从服务器 i 收到的快照数据(m.Snapshot)加载到测试配置中，
+			// 并更新该服务器的已提交日志副本和 lastApplied 索引。
 			err_msg = cfg.ingestSnap(i, m.Snapshot, m.SnapshotIndex)
 			cfg.mu.Unlock()
 		} else if m.CommandValid {
+			// 命令有效就
 			if m.CommandIndex != cfg.lastApplied[i]+1 {
 				err_msg = fmt.Sprintf("server %v apply out of order, expected index %v, got %v", i, cfg.lastApplied[i]+1, m.CommandIndex)
 			}
@@ -248,6 +286,10 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			if err_msg == "" {
 				cfg.mu.Lock()
 				var prevok bool
+				// 作用是：检查每个节点的相同下标的日志的命令是否完全一致（
+				//如果不一致返回值错误信息，第一个返回值），并将i这个
+				//节点的 m.CommandIndex这个索引的命令设置为m.并更新最大索引，
+				//并返回m.CommandIndex是不是下标为0(第二个返回值)
 				err_msg, prevok = cfg.checkLogs(i, m)
 				cfg.mu.Unlock()
 				if m.CommandIndex > 1 && prevok == false {
@@ -260,6 +302,7 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 			cfg.mu.Unlock()
 
 			if (m.CommandIndex+1)%SnapShotInterval == 0 {
+				// 开始生成快照
 				w := new(bytes.Buffer)
 				e := labgob.NewEncoder(w)
 				e.Encode(m.CommandIndex)
@@ -268,6 +311,8 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 					xlog = append(xlog, cfg.logs[i][j])
 				}
 				e.Encode(xlog)
+				// 将快照发送给节点
+				DPrintf(111, "开始生产快照")
 				rf.Snapshot(m.CommandIndex, w.Bytes())
 			}
 		} else {
@@ -282,11 +327,13 @@ func (cfg *config) applierSnap(i int, applyCh chan ApplyMsg) {
 	}
 }
 
-// start or re-start a Raft.
-// if one already exists, "kill" it first.
-// allocate new outgoing port file names, and a new
-// state persister, to isolate previous instance of
-// this server. since we cannot really kill it.
+// 启动或重启一个 Raft 实例。
+// 如果已经存在，则先“杀死”它。
+// 分配新的出站端口文件名和新的状态持久化器，以隔离该服务器的上一个实例。
+// 因为我们实际上无法真正杀死它。
+//并将快照信息放入测试的cfg.log中,并更新该服务器的已提交日志副本和 lastApplied 索引。
+//然后启动一个协程,这个协程就是 cfg.applierSnap
+
 func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 	// 如果节点已经存在，先模拟 "杀死" 该节点。
 	cfg.crash1(i)
@@ -317,8 +364,8 @@ func (cfg *config) start1(i int, applier func(int, chan ApplyMsg)) {
 		// 检查是否有快照数据。
 		snapshot := cfg.saved[i].ReadSnapshot()
 		if snapshot != nil && len(snapshot) > 0 {
-			// 模拟 KV 服务的快照处理行为。
-			// 理想情况下，Raft 应该通过 applyCh 发送快照。
+			// ingestSnap 用于将从服务器 i 收到的快照数据加载到测试配置中，
+			// 并更新该服务器的已提交日志副本和 lastApplied 索引。
 			err := cfg.ingestSnap(i, snapshot, -1)
 			if err != "" {
 				cfg.t.Fatal(err) // 如果处理快照出错，则触发测试失败。
@@ -378,7 +425,7 @@ func (cfg *config) cleanup() {
 
 // attach server i to the net.
 func (cfg *config) connect(i int) {
-	fmt.Printf("connect(%d)\n", i)
+	DPrintf(111, "connect(%d)\n", i)
 
 	cfg.connected[i] = true
 
@@ -401,7 +448,7 @@ func (cfg *config) connect(i int) {
 
 // detach server i from the net.
 func (cfg *config) disconnect(i int) {
-	fmt.Printf("disconnect(%d)\n", i)
+	DPrintf(111, "disconnect(%d)\n", i)
 	cfg.connected[i] = false
 
 	// outgoing ClientEnds
@@ -441,16 +488,11 @@ func (cfg *config) setlongreordering(longrel bool) {
 	cfg.net.LongReordering(longrel)
 }
 
-// check that one of the connected servers thinks
-// it is the leader, and that no other connected
-// server thinks otherwise.
-//
-// try a few times in case re-elections are needed.
 func (cfg *config) checkOneLeader() int {
 	// 进行最多 10 次迭代检查是否存在唯一的 leader。
-	fmt.Println("进行最多 10 次迭代检查是否存在唯一的 leader。")
+	DPrintf(111, "进行最多 10 次迭代检查是否存在唯一的 leader。")
 	for iters := 0; iters < 10; iters++ {
-		fmt.Printf("第%d次检查\n", iters+1)
+		DPrintf(111, "第%d次检查\n", iters+1)
 		// 随机休眠 450-550 毫秒，模拟网络延迟或系统状态变化。
 		ms := 450 + (rand.Int63() % 100)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
@@ -528,7 +570,7 @@ func (cfg *config) nCommitted(index int) (int, interface{}) {
 	var cmd interface{} = nil
 	// 遍历raft实例
 	for i := 0; i < len(cfg.rafts); i++ {
-		DPrintf(111, "检查节点%d下标%d日志是否一致", i, index)
+		DPrintf(99, "检查节点%d下标%d日志是否一致", i, index)
 		// cfg.applyErr数组负责存储 ”捕捉错误的协程“ 收集到的错误，
 		//如果不空，则说明捕捉到异常
 		if cfg.applyErr[i] != "" {
@@ -625,8 +667,8 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 	count := 0 // 自己加的后面删
 	for time.Since(t0).Seconds() < 10 && cfg.checkFinished() == false {
 		// try all the servers, maybe one is the leader.
-		count++                            // 自己加的后面删
-		DPrintf(111, "One函数第%d次检查", count) // 自己加的后面删
+		count++                           // 自己加的后面删
+		DPrintf(99, "One函数第%d次检查", count) // 自己加的后面删
 		index := -1
 		for si := 0; si < cfg.n; si++ {
 			starts = (starts + 1) % cfg.n
@@ -655,9 +697,10 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			// 下面这个循环的意思是每隔20ms就轮询一次已经提交内容为cmd的日志项的节点数量是否大于等于expectedServers
 			// 为什么是2s内呢？因为正常情况下2s内一定能确认所有的节点都能够提交成功
 			count1 := 0 //自己加的
+			DPrintf(111, "开始循环检查检查下标%d日志是否一致", index)
 			for time.Since(t1).Seconds() < 2 {
 				count1++
-				DPrintf(111, "第%d次检查下标%d日志是否一致", count1, index)
+				DPrintf(99, "第%d次检查下标%d日志是否一致", count1, index)
 				nd, cmd1 := cfg.nCommitted(index)
 				// 如果是则比较在这个索引位置上各节点提交的日志是否和给定的日志相同，如果相同直接返回索引
 				if nd > 0 && nd >= expectedServers {
@@ -672,7 +715,6 @@ func (cfg *config) one(cmd interface{}, expectedServers int, retry bool) int {
 			}
 			// 如果不是则看是否重试，不允许重试就抛异常
 			if retry == false {
-
 				cfg.t.Fatalf("one(%v) failed to reach agreement", cmd)
 			}
 		} else {

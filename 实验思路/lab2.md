@@ -85,6 +85,7 @@ endEntries 成功，跟随者的日志将与领导者的日志一致，并且在
 3. 然后就是领导者选举应该进行修改,不能单单由于任期大就选择它作为领导者,因为存在一种情况,他断开了连接,导致他不停的去开启选举,增加自己的任期,但他存储的日志
 可能非常少,因为在断链的这段时间,没有日志的添加.所以,当选举时遇到比自己任期大的(小于自己的还是直接返回false),先复制他的任期,
 并判断日志的最后一个的任期,相同还要进一步判断日志的最后一个的索引大与自己与否
+4. 成为领导者的时候应该将从节点的commitIndex设置为0,NextIndex设置为 最大索引加一
 
 
 
@@ -152,11 +153,48 @@ Log来重建自己的状态。当故障重启之后，遍历并执行整个Log�
 如果Leader发现有任何一个Follower的Log落后于Leader要做快照的点，那么Leader就不丢弃快照之前的Log。Leader原则上是可以知道Follower的Log位置，
 然后Leader可以不丢弃所有Follower中最短Log之后的本地Log。这或许是一个短暂的好方法，之所以这个方法不完美的原因在于，如果一个Follower关机了一周，
 它也就不能确认Log条目，同时也意味着Leader不能通过快照来减少自己的内存消耗（因为那个Follower的Log长度一直没有更新）。所以，Raft选择的方法是，Le
-ader可以丢弃Follower需要的Log。所以，我们需要某种机制让AppendEntries能处理某些Follower Log的结尾到Leader Log开始之间丢失的这一段Log。解决
-方法是（一个新的消息类型）InstallSnapshot RPC。当Follower刚刚恢复，如果它的Log短于Leader通过 AppendEntries RPC发给它的内容，那么它首先会
+ader可以丢弃Follower需要的Log。所以，我们需要某种机制让AppendEntries能处理某些Follower的Log的结尾到Leader的Log开始之间丢失的这一段Log。解决
+方法是（一个新的消息类型）InstallSnapshot RPC。当Follower刚刚恢复，如果它的Log短于Leader,通过 AppendEntries RPC发给它的内容，那么它首先会
 强制Leader回退自己的Log。在某个点，Leader将不能再回退，因为它已经到了自己Log的起点。这时，Leader会将自己的快照发给Follower，之后立即通过Appe
 ndEntries将后面的Log发给Follower。
+
+
+#### 流程
+Raft的解决方案：InstallSnapshot RPC
+Raft通过引入 InstallSnapshot RPC 解决快照截断后的日志同步问题。以下是其核心流程：
+
+1. Leader检测到Follower日志落后,Leader为每个Follower维护nextIndex（下一次要发送的日志索引）。例如，某Follower的 nextIndex=500，而Leader的快照起始索引为
+index=1000。当 nextIndex < 快照起始索引 时，说明Follower需要快照。
+2. 发送快照,Leader通过 InstallSnapshot RPC 发送以下信息:LastIncludedIndex：快照的最后日志索引（如 1000）。
+LastIncludedTerm：该索引对应的日志任期。快照数据：序列化的状态机数据。
+3. Follower处理快照:Follower收到快照后：
+比较快照新旧：若 LastIncludedIndex > 自身日志长度，则接受快照。
+截断日志：丢弃所有现有日志，保留快照后的日志（若有）。
+更新状态：设置 commitIndex = lastApplied = LastIncludedIndex。
+应用快照：将快照数据加载到状态机。
+持久化：保存快照元数据（LastIncludedIndex、LastIncludedTerm）。
+4. 继续日志同步
+Leader更新该Follower的 nextIndex = LastIncludedIndex + 1（如 1001）。后续通过 AppendEntries 发送 index=1001 及之后的日志。
+
 ### 踩坑
-
-
+1. 任期一致返回0,原因是忘记再最开始初始化返回值的任期为当前任期,导致一些情况返回任期为默认值0 
+2. 当一个节点关闭长时间重新启动后,由于我并没有设置lastApplied的值为快照的
+索引值,导致接受日志后,更新自己commitIndex后,调用tryApply函数时,超过lastApplied
+太多,导致panic
+3. 有种情况:firstlogIndex >lastlogIndex时,获取最后的日志任期时,应该返回快照的最大任期,否则
+在领导者选举时候,getLastEntryTerm返回-1,从而得出鹿后的领导者
 ### 实验思路
+实验主要是实现 快照和日志压缩.三个关键属性:快照数据,快照的最大索引和任期
+
+1. 需要实现Snapshot这个是test需要使用的,参数是快照的最大索引以及快照,作用是把快照同步给从节点,首选传入的参数分别是,快照和快照的最大索引.
+所以,我们需要判断这个快照的最大索引是否大于自己的firstLogIndex,如果大于那么说明这个快照是更新的,就要更新自己快照,并更新相应字段.并更新自己的firstLogIndex
+.以及提交索引和应用索引,然后将快照发送到相应从节点.从节点接受到快照时,也要进行相应判断.比如任期小于自己的返回,大于自己的更新自己任期.以及快照的索引
+是否大于当前自己快照的索引等.当快照索引大于自身快照索引,应该去更新快照,并根据是否大于自己的最大索引,来缩短日志
+2. 复制日志时,如果nextIndex小于快照索引,直接发送快照即可.如果当前节点的日志是空,那么也应该发送快照,应该
+这个可能是刚生产了快照,或者节点刚启动的时候.
+3. 持久化加入对快照和快照最大索引的持久化.在节点启动时,也应该更新好自己的lastApplied为快照的最大索引
+
+
+### 优化部分
+
+

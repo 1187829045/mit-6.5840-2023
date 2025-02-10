@@ -16,7 +16,6 @@ import (
 	"6.5840/labgob"
 	"6.5840/labrpc"
 	"bytes"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,37 +38,50 @@ func (rf *Raft) GetState() (int, bool) {
 
 // 在实现快照之前，传递 nil 作为 persister.Save() 的第二个参数。
 // 实现快照后，传递当前快照（如果没有快照则传递 nil）。
-func (rf *Raft) persist() { //2C才需要编写
-	// 你的代码（用于 2C）。
+func (rf *Raft) persist() { // 2C 部分才需要编写持久化代码
+	// 创建一个新的字节缓冲区，用于存放编码后的持久化数据
 	w := new(bytes.Buffer)
+	// 创建一个 labgob 编码器，该编码器用于将数据编码为字节序列
 	e := labgob.NewEncoder(w)
+	// 编码并写入当前任期 (currentTerm) 到缓冲区中，确保任期信息被持久化
 	e.Encode(rf.currentTerm) // 持久化任期
-	e.Encode(rf.votedFor)    // 持久化votedFor
+	e.Encode(rf.votedFor)    // 持久化 votedFor
 	e.Encode(rf.log)         // 持久化日志
+	e.Encode(rf.snapshotLastIncludeIndex)
+	e.Encode(rf.snapshotLastIncludeTerm)
+	// 从缓冲区中获取编码后的字节数据
 	data := w.Bytes()
-	go rf.persister.SaveRaftState(data)
-	//DPrintf(100, "%v: persist rf.currentTerm=%v rf.voteFor=%v rf.log=%v\n", rf.SayMeL(), rf.currentTerm, rf.votedFor, rf.log)
+	if rf.snapshotLastIncludeIndex > 0 {
+		rf.persister.SaveStateAndSnapshot(data, rf.snapshot) //取消协程运行
+	} else {
+		rf.persister.SaveRaftState(data) //取消协程运行
+	}
 }
 
 // 恢复之前的持久化状态。
 func (rf *Raft) readPersist() { //2C
 	stateData := rf.persister.ReadRaftState()
-	if stateData == nil || len(stateData) < 1 { // bootstrap without any state?
+	if stateData == nil || len(stateData) < 1 {
 		return
 	}
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	// Your code here (2C).
-	if stateData != nil && len(stateData) > 0 { // bootstrap without any state?
+	if stateData != nil && len(stateData) > 0 {
 		r := bytes.NewBuffer(stateData)
 		d := labgob.NewDecoder(r)
 		rf.votedFor = 0 // in case labgob waring
 		if d.Decode(&rf.currentTerm) != nil ||
 			d.Decode(&rf.votedFor) != nil ||
-			d.Decode(&rf.log) != nil {
+			d.Decode(&rf.log) != nil ||
+			d.Decode(&rf.snapshotLastIncludeIndex) != nil ||
+			d.Decode(&rf.snapshotLastIncludeTerm) != nil {
 			//   error...
 			panic("readPersist失败")
 		}
+		rf.snapshot = rf.persister.ReadSnapshot()
+		rf.commitIndex = rf.snapshotLastIncludeIndex
+		rf.lastApplied = rf.snapshotLastIncludeIndex
 	}
 }
 
@@ -132,23 +144,12 @@ func (rf *Raft) killed() bool {
 	return z == 1
 }
 
-// // the service says it has created a snapshot that has
-// // all info up to and including index. this means the
-// // service no longer needs the log through (and including)
-// // that index. Raft should now trim its log as much as possible.
-func (rf *Raft) Snapshot(index int, snapshot []byte) {
-	// Your code here (2D).
-
-}
-
 func (rf *Raft) StartAppendEntries(heart bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	if rf.state != Leader {
 		return
 	}
-	// 并行向其他节点发送心跳或者日志，让他们知道此刻已经有一个leader产生
-	//DPrintf(111, "%v: detect the len of peers: %d", rf.SayMeL(), len(rf.peers))
 	for i, _ := range rf.peers {
 		if i == rf.me {
 			continue
@@ -164,7 +165,6 @@ func (rf *Raft) sendMsgToTester() {
 	defer rf.mu.Unlock()
 	for !rf.killed() {
 		rf.applyCond.Wait()
-
 		for rf.lastApplied+1 <= rf.commitIndex {
 			i := rf.lastApplied + 1
 			rf.lastApplied++
@@ -194,19 +194,25 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.resetElectionTimer()
 	rf.heartbeatTimeout = heartbeatTimeout // 这个是固定的
 	rf.log = NewLog()
-	// initialize from state persisted before a crash
-	rf.readPersist()
-	fmt.Printf("当前节点%d的日志从持久化存储中读取的是", rf.me)
-	fmt.Println(rf.log)
-	rf.applyHelper = NewApplyHelper(applyCh, rf.lastApplied)
+	// 初始化快照
+	rf.snapshot = nil
+	rf.snapshotLastIncludeIndex = 0
+	rf.snapshotLastIncludeTerm = 0
+	// 初始化状态机相关参数
+	//fmt.Println(rf.lastApplied)
 	rf.commitIndex = 0
 	rf.lastApplied = 0
+	// initialize from state persisted before a crash
+	rf.readPersist()
+	rf.applyHelper = NewApplyHelper(applyCh, rf.lastApplied) //要在读取快照后
+	DPrintf(111, "当前节点%d的日志从持久化存储中读取的是", rf.me)
+	DPrintf(111, "%v", rf.log)
+	DPrintf(111, "snapshotLastIncludeIndex=%d,snapshotLastIncludeTerm =%d,\n", rf.snapshotLastIncludeIndex, rf.snapshotLastIncludeTerm)
 	rf.peerTrackers = make([]PeerTracker, len(rf.peers)) //对等节点追踪器
 	rf.applyCond = sync.NewCond(&rf.mu)
-
+	DPrintf(111, "第%d节点初始化完毕,任期是%d", rf.me, rf.currentTerm)
 	//Leader选举协程
 	go rf.ticker()
-	DPrintf(111, "第%d节点初始化完毕,任期是%d", rf.me, rf.currentTerm)
 	go rf.sendMsgToTester() // 供config协程追踪日志以测试
 
 	return rf
@@ -225,13 +231,9 @@ func (rf *Raft) ticker() {
 			if rf.pastElectionTimeout() {
 				rf.StartElection()
 			}
-
 		case Leader:
 
-			// 只有Leader节点才能发送心跳和日志给从节点
 			isHeartbeat := false
-			// 检测是需要发送单纯的心跳还是发送日志
-			// 心跳定时器过期则发送心跳，否则发送日志
 			if rf.pastHeartbeatTimeout() {
 				isHeartbeat = true
 				rf.resetHeartbeatTimer()
@@ -240,5 +242,4 @@ func (rf *Raft) ticker() {
 		}
 		time.Sleep(tickInterval)
 	}
-	DPrintf(111, "tim")
 }

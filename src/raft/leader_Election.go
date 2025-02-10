@@ -3,7 +3,7 @@ package raft
 func (rf *Raft) StartElection() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf(200, "节点%d选举超时开始选举任期是%d,当前的状态是%d", rf.me, rf.currentTerm+1, rf.state)
+	DPrintf(99, "节点%d选举超时开始选举任期是%d,当前的状态是%d", rf.me, rf.currentTerm+1, rf.state)
 	rf.becomeCandidate()
 	term := rf.currentTerm
 	done := false
@@ -65,6 +65,7 @@ func (rf *Raft) HandleHeartbeatRPC(args *RequestAppendEntriesArgs, reply *Reques
 		rf.currentTerm = args.LeaderTerm
 		reply.FollowerTerm = rf.currentTerm
 	}
+	rf.persist()
 	// 重置自身的选举定时器，这样自己就不会重新发出选举需求（因为它在ticker函数中被阻塞住了）
 }
 
@@ -73,7 +74,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (2A, 2B).
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	DPrintf(111, "节点%d收到%d选举的请求", rf.me, args.CandidateId)
+	DPrintf(99, "节点%d收到%d选举的请求", rf.me, args.CandidateId)
 	reply.VoteGranted = true // 默认设置响应体为投同意票状态
 	reply.Term = rf.currentTerm
 	//竞选leader的节点任期小于等于自己的任期，则反对票(为什么等于情况也反对票呢？因为candidate节点在发送requestVote rpc之前会将自己的term+1)
@@ -87,6 +88,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = None
 		rf.state = Follower
 		reply.Term = rf.currentTerm
+		rf.persist()
 	}
 
 	// candidate节点发送过来的日志索引以及任期必须大于等于自己的日志索引及任期
@@ -98,10 +100,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.votedFor = args.CandidateId
 		rf.state = Follower
 		rf.resetElectionTimer() //自己的票已经投出时就转为follower状态
-		DPrintf(111, "节点%d同意%d成为leader", rf.me, args.CandidateId)
+		DPrintf(99, "节点%d同意%d成为leader", rf.me, args.CandidateId)
 		rf.persist()
 	} else {
 		reply.VoteGranted = false
-		DPrintf(111, "节点%d拒绝%d成为leader,rf.votedFor = %d", rf.me, args.CandidateId, rf.votedFor)
+		DPrintf(99, "节点%d拒绝%d成为leader,rf.votedFor = %d", rf.me, args.CandidateId, rf.votedFor)
 	}
 }

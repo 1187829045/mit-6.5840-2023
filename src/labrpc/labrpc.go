@@ -433,8 +433,9 @@ func (rs *Server) GetCount() int {
 	return rs.count
 }
 
-// an object with methods that can be called via RPC.
-// a single server may have more than one Service.
+// 一个具有可通过 RPC 调用的方法的对象。
+// 单个服务器可能包含多个 Service（服务）。
+
 type Service struct {
 	name    string
 	rcvr    reflect.Value
@@ -442,34 +443,47 @@ type Service struct {
 	methods map[string]reflect.Method
 }
 
+// MakeService 根据传入的接收者 rcvr 创建一个新的 Service 对象。
+// 这个 Service 用于封装一个对象（rcvr）的所有导出方法，供 RPC 调用使用。
 func MakeService(rcvr interface{}) *Service {
 	svc := &Service{}
+	// 获取接收者对象的反射类型，并赋值给 svc.typ
 	svc.typ = reflect.TypeOf(rcvr)
+	// 获取接收者对象的反射值，并赋值给 svc.rcvr
 	svc.rcvr = reflect.ValueOf(rcvr)
+
+	// 使用 reflect.Indirect 取得 rcvr 指针指向的值，再获取其类型名称，
+	// 并赋值给 svc.name。通常用于记录该服务的名字。
 	svc.name = reflect.Indirect(svc.rcvr).Type().Name()
+
+	// 初始化一个空的 map，用于保存该 Service 的方法，
+	// 键为方法名称，值为反射 Method 对象。
 	svc.methods = map[string]reflect.Method{}
 
+	// 遍历 rcvr 类型中所有导出的方法
 	for m := 0; m < svc.typ.NumMethod(); m++ {
 		method := svc.typ.Method(m)
 		mtype := method.Type
 		mname := method.Name
 
-		//fmt.Printf("%v pp %v ni %v 1k %v 2k %v no %v\n",
-		//	mname, method.PkgPath, mtype.NumIn(), mtype.In(1).Kind(), mtype.In(2).Kind(), mtype.NumOut())
-
-		if method.PkgPath != "" || // capitalized?
-			mtype.NumIn() != 3 ||
-			//mtype.In(1).Kind() != reflect.Ptr ||
-			mtype.In(2).Kind() != reflect.Ptr ||
-			mtype.NumOut() != 0 {
-			// the method is not suitable for a handler
-			//fmt.Printf("bad method: %v\n", mname)
+		// 判断方法是否适合用作 RPC 处理函数，要求满足：
+		// 1. method.PkgPath == "" 表示该方法是导出的（大写开头）
+		// 2. 方法的参数数量必须为3（包括接收者参数，通常格式为 func (rcvr) Method(arg *Args, reply *Reply)）
+		// 3. 方法的第二个参数（索引为2）的类型必须是指针（通常为 *Reply）
+		// 4. 方法没有返回值
+		if method.PkgPath != "" || // 如果 PkgPath 非空，表示方法不是导出的
+			mtype.NumIn() != 3 || // 参数数量不为 3
+			// mtype.In(1).Kind() != reflect.Ptr || // （注释掉的检查：可以检查第一个参数是否为指针，通常不检查）
+			mtype.In(2).Kind() != reflect.Ptr || // 第二个参数必须是指针类型
+			mtype.NumOut() != 0 { // 返回值数量必须为 0
 		} else {
-			// the method looks like a handler
+			// 如果满足要求，则将该方法保存到 svc.methods 映射中，
+			// 键为方法名称，值为方法的反射对象。
 			svc.methods[mname] = method
 		}
 	}
 
+	// 返回构造好的 Service 对象
 	return svc
 }
 

@@ -20,6 +20,8 @@ func (rf *Raft) AppendEntries(targetServerId int, heart bool) {
 		return
 	} else {
 		args := RequestAppendEntriesArgs{}
+		reply := RequestAppendEntriesReply{}
+
 		rf.mu.Lock()
 		DPrintf(111, "节点%d向节点%d发送日志", rf.me, targetServerId)
 		if rf.state != Leader {
@@ -28,6 +30,9 @@ func (rf *Raft) AppendEntries(targetServerId int, heart bool) {
 		}
 		args.PrevLogIndex = min(rf.log.LastLogIndex, rf.peerTrackers[targetServerId].nextIndex-1)
 		if args.PrevLogIndex+1 < rf.log.FirstLogIndex {
+			DPrintf(111, "节点%d日志匹配索引为%d更新速度太慢，节点%d准备发送快照", targetServerId, args.PrevLogIndex, rf.me)
+			go rf.InstallSnapshot(targetServerId)
+			rf.mu.Unlock()
 			return
 		}
 		args.LeaderTerm = rf.currentTerm
@@ -36,14 +41,17 @@ func (rf *Raft) AppendEntries(targetServerId int, heart bool) {
 		args.PrevLogTerm = rf.getEntryTerm(args.PrevLogIndex)
 		args.Entries = rf.log.getAppendEntries(args.PrevLogIndex + 1)
 		rf.mu.Unlock()
-		reply := RequestAppendEntriesReply{}
 
 		ok := rf.sendRequestAppendEntries(false, targetServerId, &args, &reply)
 		if !ok {
+			DPrintf(111, "sendRequestAppendEntries函数调用失败")
 			return
 		}
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
+		if rf.state != Leader {
+			return
+		}
 		// 丢掉旧rpc响应
 		if reply.FollowerTerm < rf.currentTerm {
 			return
@@ -62,12 +70,15 @@ func (rf *Raft) AppendEntries(targetServerId int, heart bool) {
 			rf.tryCommitL(rf.peerTrackers[targetServerId].matchIndex)
 			return
 		}
-
-		//reply.Success is false
 		if rf.log.empty() {
+			DPrintf(111, "日志被快照清空，发送给%d快照", targetServerId)
+			go rf.InstallSnapshot(targetServerId)
 			return
 		}
 		if reply.PrevLogIndex+1 < rf.log.FirstLogIndex {
+			DPrintf(111, "节点%d日志匹配索引为%d更新速度太慢，节点%d准备发送快照,快照的最大索引是%d",
+				targetServerId, args.PrevLogIndex, rf.me, rf.snapshotLastIncludeIndex)
+			go rf.InstallSnapshot(targetServerId)
 			return
 		}
 		if reply.PrevLogIndex > rf.log.LastLogIndex {
@@ -142,7 +153,6 @@ func (rf *Raft) HandleAppendEntriesRPC(args *RequestAppendEntriesArgs, reply *Re
 		for prevIndex >= rf.log.FirstLogIndex && rf.getEntryTerm(prevIndex) == rf.log.getOneEntry(args.PrevLogIndex).Term {
 			prevIndex--
 		}
-		//prevIndex++ // 当前任期提交的第一个日志
 		reply.FollowerTerm = rf.currentTerm
 		reply.Success = false
 		if prevIndex >= rf.log.FirstLogIndex {

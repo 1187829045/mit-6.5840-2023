@@ -1,11 +1,8 @@
 package labgob
 
-//
-// trying to send non-capitalized fields over RPC produces a range of
-// misbehavior, including both mysterious incorrect computation and
-// outright crashes. so this wrapper around Go's encoding/gob warns
-// about non-capitalized field names.
-//
+// 在 Go 语言中，若尝试通过 RPC 发送非大写字母开头的字段（未导出字段），
+// 会导致一系列异常行为，包括难以察觉的错误计算和彻底崩溃。
+// 因此，此封装层（基于 Go 的 encoding/gob）会对非大写的字段名发出警告。
 
 import "encoding/gob"
 import "io"
@@ -28,12 +25,10 @@ func NewEncoder(w io.Writer) *LabEncoder {
 	enc.gob = gob.NewEncoder(w)
 	return enc
 }
-
 func (enc *LabEncoder) Encode(e interface{}) error {
 	checkValue(e)
 	return enc.gob.Encode(e)
 }
-
 func (enc *LabEncoder) EncodeValue(value reflect.Value) error {
 	checkValue(value.Interface())
 	return enc.gob.EncodeValue(value)
@@ -112,13 +107,11 @@ func checkType(t reflect.Type) {
 	}
 }
 
-//
 // warn if the value contains non-default values,
 // as it would if one sent an RPC but the reply
 // struct was already modified. if the RPC reply
 // contains default values, GOB won't overwrite
 // the non-default value.
-//
 func checkDefault(value interface{}) {
 	if value == nil {
 		return

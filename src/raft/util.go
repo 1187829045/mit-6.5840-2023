@@ -7,13 +7,12 @@ import (
 )
 
 // Debugging
-const Debug_level = 1000
+const Debug_level = 100
 
-func DPrintf(level int, format string, a ...interface{}) (n int, err error) {
+func DPrintf(level int, format string, a ...interface{}) {
 	if Debug_level <= level {
 		log.Printf(format, a...)
 	}
-	return
 }
 
 func max(a, b int) int {
@@ -77,18 +76,18 @@ func (applyHelper *ApplyHelper) applier() {
 		if len(applyHelper.q) == 0 {
 			applyHelper.cond.Wait()
 		}
+		DPrintf(99, "applier 开始从自身队列中取数据放入applyCh管道中")
 		msg := applyHelper.q[0]
+		DPrintf(99, "msg=%v", msg)
 		applyHelper.q = applyHelper.q[1:]
 		applyHelper.mu.Unlock()
-		DPrintf(8, "applyhelper start apply msg index=%v ", ifCond(msg.CommandValid, msg.CommandIndex, msg.SnapshotIndex))
 		applyHelper.applyCh <- msg
-		DPrintf(8, "applyhelper done apply msg index=%v", ifCond(msg.CommandValid, msg.CommandIndex, msg.SnapshotIndex))
 	}
 }
 func (applyHelper *ApplyHelper) tryApply(msg *ApplyMsg) bool {
 	applyHelper.mu.Lock()
 	defer applyHelper.mu.Unlock()
-	DPrintf(100, "applyhelper get msg index=%v", ifCond(msg.CommandValid, msg.CommandIndex, msg.SnapshotIndex))
+	DPrintf(99, "tryApply向自身数组放入数据")
 	if msg.CommandValid {
 		if msg.CommandIndex <= applyHelper.lastItemIndex {
 			return true
@@ -99,7 +98,9 @@ func (applyHelper *ApplyHelper) tryApply(msg *ApplyMsg) bool {
 			applyHelper.cond.Broadcast()
 			return true
 		}
-		panic("applyhelper meet false")
+		DPrintf(99, "msg.CommandIndex =%d,applyHelper.lastItemIndex=%d",
+			msg.CommandIndex, applyHelper.lastItemIndex)
+		panic("tryApply 出错")
 		return false
 	} else if msg.SnapshotValid {
 		if msg.SnapshotIndex <= applyHelper.lastItemIndex {

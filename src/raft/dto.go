@@ -54,6 +54,10 @@ type Raft struct {
 
 	applyHelper *ApplyHelper
 	applyCond   *sync.Cond
+
+	snapshot                 []byte
+	snapshotLastIncludeIndex int
+	snapshotLastIncludeTerm  int
 }
 
 type RequestAppendEntriesArgs struct {
@@ -99,4 +103,14 @@ type Log struct {
 	Entries       []Entry
 	FirstLogIndex int
 	LastLogIndex  int
+}
+type RequestInstallSnapShotArgs struct {
+	Term             int
+	LeaderId         int
+	LastIncludeIndex int
+	LastIncludeTerm  int
+	Snapshot         []byte
+}
+type RequestInstallSnapShotReply struct {
+	Term int
 }

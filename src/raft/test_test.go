@@ -1119,6 +1119,9 @@ func TestUnreliableChurn2C(t *testing.T) {
 
 const MAXLOGSIZE = 2000
 
+// 若 disconnect=true：断开 victim 节点，提交新值（剩余节点达成一致）。
+//
+// 若 crash=true：崩溃 victim 节点，提交新值（剩余节点达成一致）。
 func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash bool) {
 	iters := 30
 	servers := 3
@@ -1130,7 +1133,9 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 	cfg.one(rand.Int(), servers, true)
 	leader1 := cfg.checkOneLeader()
 
+	DPrintf(111, "snapcommon 开始循环%d次", iters)
 	for i := 0; i < iters; i++ {
+		DPrintf(111, "第%d次循环", i+1)
 		victim := (leader1 + 1) % servers
 		sender := leader1
 		if i%3 == 1 {
@@ -1147,17 +1152,16 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			cfg.one(rand.Int(), servers-1, true)
 		}
 
-		// perhaps send enough to get a snapshot
+		// 可能发送足够的数据以生成快照
 		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
+		DPrintf(111, "加入%d条日志", nn)
 		for i := 0; i < nn; i++ {
 			cfg.rafts[sender].Start(rand.Int())
 		}
 
-		// let applier threads catch up with the Start()'s
+		// 让应用线程追上 Start() 的进度
 		if disconnect == false && crash == false {
-			// make sure all followers have caught up, so that
-			// an InstallSnapshot RPC isn't required for
-			// TestSnapshotBasic2D().
+			// 确保所有跟随者都已追上，以避免在 TestSnapshotBasic2D() 中需要 InstallSnapshot RPC。
 			cfg.one(rand.Int(), servers, true)
 		} else {
 			cfg.one(rand.Int(), servers-1, true)
@@ -1174,7 +1178,7 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			leader1 = cfg.checkOneLeader()
 		}
 		if crash {
-			cfg.start1(victim, cfg.applierSnap)
+			cfg.start1(victim, cfg.applierSnap) //该函数会杀死
 			cfg.connect(victim)
 			cfg.one(rand.Int(), servers, true)
 			leader1 = cfg.checkOneLeader()
