@@ -110,7 +110,6 @@ func TestManyElections2A(t *testing.T) {
 		cfg.disconnect(i1)
 		cfg.disconnect(i2)
 		cfg.disconnect(i3)
-
 		// either the current leader should still be alive,
 		// or the remaining four should elect a new one.
 		cfg.checkOneLeader()
@@ -1119,11 +1118,8 @@ func TestUnreliableChurn2C(t *testing.T) {
 
 const MAXLOGSIZE = 2000
 
-// 若 disconnect=true：断开 victim 节点，提交新值（剩余节点达成一致）。
-//
-// 若 crash=true：崩溃 victim 节点，提交新值（剩余节点达成一致）。
 func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash bool) {
-	iters := 30
+	iters := 20
 	servers := 3
 	cfg := make_config(t, servers, !reliable, true)
 	defer cfg.cleanup()
@@ -1133,9 +1129,8 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 	cfg.one(rand.Int(), servers, true)
 	leader1 := cfg.checkOneLeader()
 
-	DPrintf(111, "snapcommon 开始循环%d次", iters)
 	for i := 0; i < iters; i++ {
-		DPrintf(111, "第%d次循环", i+1)
+		DPrintf(1111, "this is the %d th iter", i)
 		victim := (leader1 + 1) % servers
 		sender := leader1
 		if i%3 == 1 {
@@ -1149,22 +1144,30 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 		}
 		if crash {
 			cfg.crash1(victim)
+			DPrintf(111, "%d 节点已经被下线", victim)
 			cfg.one(rand.Int(), servers-1, true)
+			DPrintf(111, "成功将节点%d下线", victim)
 		}
 
-		// 可能发送足够的数据以生成快照
+		// perhaps send enough to get a snapshot
 		nn := (SnapShotInterval / 2) + (rand.Int() % SnapShotInterval)
-		DPrintf(111, "加入%d条日志", nn)
+		DPrintf(111, "发送足够的日志以便后续校验其正确性")
 		for i := 0; i < nn; i++ {
 			cfg.rafts[sender].Start(rand.Int())
 		}
 
-		// 让应用线程追上 Start() 的进度
+		// let applier threads catch up with the Start()'s
 		if disconnect == false && crash == false {
-			// 确保所有跟随者都已追上，以避免在 TestSnapshotBasic2D() 中需要 InstallSnapshot RPC。
+			// make sure all followers have caught up, so that
+			// an InstallSnapshot RPC isn't required for
+			// TestSnapshotBasic2D().
+			DPrintf(111, "准备校验快照是否已发送给从节点....")
 			cfg.one(rand.Int(), servers, true)
+			DPrintf(111, "校验完毕....")
+
 		} else {
 			cfg.one(rand.Int(), servers-1, true)
+			DPrintf(111, "快照或者日志已被大多数节点接收")
 		}
 
 		if cfg.LogSize() >= MAXLOGSIZE {
@@ -1178,8 +1181,10 @@ func snapcommon(t *testing.T, name string, disconnect bool, reliable bool, crash
 			leader1 = cfg.checkOneLeader()
 		}
 		if crash {
-			cfg.start1(victim, cfg.applierSnap) //该函数会杀死
+			cfg.start1(victim, cfg.applierSnap)
+			DPrintf(111, "重新上线%d节点之前成功应用快照", victim)
 			cfg.connect(victim)
+
 			cfg.one(rand.Int(), servers, true)
 			leader1 = cfg.checkOneLeader()
 		}

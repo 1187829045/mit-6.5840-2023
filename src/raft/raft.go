@@ -205,8 +205,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	// initialize from state persisted before a crash
 	rf.readPersist()
 	rf.applyHelper = NewApplyHelper(applyCh, rf.lastApplied) //要在读取快照后
-	DPrintf(111, "当前节点%d的日志从持久化存储中读取的是", rf.me)
-	DPrintf(111, "%v", rf.log)
+	DPrintf(111, "当前节点%d的日志从持久化存储中读取的是%v", rf.me, rf.log)
 	DPrintf(111, "snapshotLastIncludeIndex=%d,snapshotLastIncludeTerm =%d,\n", rf.snapshotLastIncludeIndex, rf.snapshotLastIncludeTerm)
 	rf.peerTrackers = make([]PeerTracker, len(rf.peers)) //对等节点追踪器
 	rf.applyCond = sync.NewCond(&rf.mu)

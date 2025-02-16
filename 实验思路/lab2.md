@@ -195,6 +195,5 @@ Leader更新该Follower的 nextIndex = LastIncludedIndex + 1（如 1001）。后
 3. 持久化加入对快照和快照最大索引的持久化.在节点启动时,也应该更新好自己的lastApplied为快照的最大索引
 
 
-### 优化部分
 
 
