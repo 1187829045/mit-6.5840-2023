@@ -1,6 +1,6 @@
 package raft
 
-// nextIndex收敛速度优化：nextIndex跳跃算法，需搭配HandleAppendEntriesRPC2方法使用
+// AppendEntries nextIndex收敛速度优化：nextIndex跳跃算法，需搭配HandleAppendEntriesRPC2方法使用
 func (rf *Raft) AppendEntries(targetServerId int, heart bool) {
 	rf.mu.Lock()
 	rf.resetElectionTimer()

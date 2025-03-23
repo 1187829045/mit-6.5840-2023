@@ -39,6 +39,8 @@ Leader发送的AppendEntries消息的返回，之后Leader才会commit消息，�
 是线性一致的.第二个是任何一个客户端的请求，都会按照客户端指定的顺序来执行，论文里称之为FIFO（First In First Out）客户端序列。
 
 
+
+
 ### CRAQ 
 
 https://keys961.github.io/2020/05/03/%E8%AE%BA%E6%96%87%E9%98%85%E8%AF%BB-CRAQ/
