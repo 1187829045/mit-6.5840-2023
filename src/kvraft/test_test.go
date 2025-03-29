@@ -200,14 +200,18 @@ func partitioner(t *testing.T, cfg *config, ch chan bool, done *int32) {
 	}
 }
 
-// Basic test is as follows: one or more clients submitting Append/Get
-// operations to set of servers for some period of time.  After the period is
-// over, test checks that all appended values are present and in order for a
-// particular key.  If unreliable is set, RPCs may fail.  If crash is set, the
-// servers crash after the period is over and restart.  If partitions is set,
-// the test repartitions the network concurrently with the clients and servers. If
-// maxraftstate is a positive number, the size of the state for Raft (i.e., log
-// size) shouldn't exceed 8*maxraftstate. If maxraftstate is negative,
+// 基本测试如下：一个或多个客户端向一组服务器提交 Append/Get 操作，持续一段时间。测试结束后，检查特定键的所有追加值是否按顺序存在。
+//
+// 如果 unreliable 设置为 true，则 RPC 可能会失败。
+//
+// 如果 crash 设置为 true，则服务器在测试结束后会崩溃并重新启动。
+//
+// 如果 partitions 设置为 true，则测试会在客户端和服务器运行时动态地对网络进行分区。
+//
+// 如果 maxraftstate 为正数，则 Raft 的状态（即日志大小）不应超过 8 × maxraftstate。
+//
+// 如果 maxraftstate 为负数，则不应使用快照。
+
 // snapshots shouldn't be used.
 func GenericTest(t *testing.T, part string, nclients int, nservers int, unreliable bool, crash bool, partitions bool, maxraftstate int, randomkeys bool) {
 

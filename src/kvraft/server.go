@@ -102,7 +102,6 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 	select {
 	case replyOp := <-ch:
-		//fmt.Printf("[ ----Server[%v]----] : receive a GetAsk :%+v,replyOp:+%v\n", kv.me, args, replyOp)
 		if op.ClientId != replyOp.ClientId || op.SeqId != replyOp.SeqId {
 			reply.Err = ErrWrongLeader
 		} else {
@@ -159,6 +158,7 @@ func (kv *KVServer) applyMsgHandlerLoop() {
 }
 
 // 判断是否是重复操作的也比较简单,因为我是对seq进行递增，所以直接比大小即可
+
 func (kv *KVServer) ifDuplicate(clientId int64, seqId int) bool {
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
@@ -190,6 +190,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	lastIndex, _, _ := kv.rf.Start(op)
 
 	ch := kv.getWaitCh(lastIndex)
+
 	defer func() {
 		kv.mu.Lock()
 		delete(kv.waitChMap, op.Index)
@@ -215,7 +216,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	defer timer.Stop()
 }
 
-// the tester calls Kill() when a KVServer instance won't
+// Kill  the tester calls Kill() when a KVServer instance won't
 // be needed again. for your convenience, we supply
 // code to set rf.dead (without needing a lock),
 // and a killed() method to test rf.dead in
@@ -223,6 +224,7 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // code to Kill(). you're not required to do anything
 // about this, but it may be convenient (for example)
 // to suppress debug output from a Kill()ed instance.
+
 func (kv *KVServer) Kill() {
 	DPrintf(11, "%v: is killed", kv)
 	atomic.StoreInt32(&kv.dead, 1)

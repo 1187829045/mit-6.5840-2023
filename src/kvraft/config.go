@@ -78,7 +78,7 @@ func (cfg *config) cleanup() {
 	cfg.checkTimeout()
 }
 
-// Maximum log size across all servers
+// LogSize Maximum log size across all servers
 func (cfg *config) LogSize() int {
 	logsize := 0
 	for i := 0; i < cfg.n; i++ {
@@ -90,7 +90,7 @@ func (cfg *config) LogSize() int {
 	return logsize
 }
 
-// Maximum snapshot size across all servers
+// SnapshotSize Maximum snapshot size across all servers
 func (cfg *config) SnapshotSize() int {
 	snapshotsize := 0
 	for i := 0; i < cfg.n; i++ {
@@ -219,7 +219,7 @@ func (cfg *config) deleteClient(ck *Clerk) {
 	delete(cfg.clerks, ck)
 }
 
-// caller should hold cfg.mu
+// ConnectClientUnlocked caller should hold cfg.mu
 func (cfg *config) ConnectClientUnlocked(ck *Clerk, to []int) {
 	// log.Printf("ConnectClient %v to %v\n", ck, to)
 	endnames := cfg.clerks[ck]
@@ -235,7 +235,7 @@ func (cfg *config) ConnectClient(ck *Clerk, to []int) {
 	cfg.ConnectClientUnlocked(ck, to)
 }
 
-// caller should hold cfg.mu
+// DisconnectClientUnlocked caller should hold cfg.mu
 func (cfg *config) DisconnectClientUnlocked(ck *Clerk, from []int) {
 	// log.Printf("DisconnectClient %v from %v\n", ck, from)
 	endnames := cfg.clerks[ck]
@@ -251,7 +251,7 @@ func (cfg *config) DisconnectClient(ck *Clerk, from []int) {
 	cfg.DisconnectClientUnlocked(ck, from)
 }
 
-// Shutdown a server by isolating it
+// ShutdownServer Shutdown a server by isolating it
 func (cfg *config) ShutdownServer(i int) {
 	cfg.mu.Lock()
 	defer cfg.mu.Unlock()

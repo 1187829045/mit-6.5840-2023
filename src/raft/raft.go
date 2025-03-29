@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-// 这个是只给tester调的
+// GetState  这个是只给tester调的
 // return currentTerm and whether this server
 // believes it is the leader.
 func (rf *Raft) GetState() (int, bool) {

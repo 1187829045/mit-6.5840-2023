@@ -43,6 +43,7 @@ func (ck *Clerk) Get(key string) string {
 				return ""
 			} else if reply.Err == OK {
 				ck.leaderId = serverId
+				//fmt.Println(reply.Value)
 				return reply.Value
 			} else if reply.Err == ErrWrongLeader {
 				serverId = (serverId + 1) % len(ck.servers)
