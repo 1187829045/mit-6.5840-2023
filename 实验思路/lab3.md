@@ -94,3 +94,21 @@ Clerk应缓存最后已知领导者 ,通过操作去重确保仅执行一次
 2. 客户端优先领导者Id的方法,不是领导者再轮训去找到领导者
 3. 服务端实现GET,PUT,Append方法,其中一个map存储值,一个map用于检测请求是否已来过,一个待读管道用来接收,raft提交时(向applyChan放入命令),发出的命令
 4. 服务端启动协成检测这个applyCha管道,从中读取命令,放入待读管道中,当被调用了Get等方法时,就是从这个等待管道中,判断是否已提交日志的,提交成功返回成功,超时.客户端就重试
+
+
+### Part B：带快照的键值服务（困难）
+
+当前实现未使用Raft快照，重启时需要重放完整日志。现需修改kvserver，当Raft状态超过maxraftstate大小时，调用Snapshot()保存快照。maxraftstate=-1表示禁用快照。
+
+#### 关键点：
+
+1. 比较persister.RaftStateSize()与maxraftstate阈值
+2. 适时调用Raft快照
+3. 重启时从persister.ReadSnapshot()恢复状态
+4. 快照需包含去重所需的状态信息
+5. 快照中的结构体字段需大写
+   
+#### 总建议：
+
+1. Lab 3测试应在400秒实际时间/700秒CPU时间内完成
+2. TestSnapshotSize应少于20秒实际时间
