@@ -92,7 +92,7 @@ func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
 
 	// 封装Op传到下层start
 	op := Op{OpType: GetOp, Key: args.Key, SeqId: args.SeqId, ClientId: args.ClientId}
-	//fmt.Printf("[ ----Server[%v]----] : send a Get,op is :%+v \n", kv.me, op)
+
 	lastIndex, _, _ := kv.rf.Start(op)
 	op.Index = lastIndex
 	DPrintf(11111, "lastIndex为%d的命令:%v", lastIndex, op)
@@ -146,7 +146,6 @@ func (kv *KVServer) applyMsgHandlerLoop() {
 				index := msg.CommandIndex
 				op := msg.Command.(Op)
 
-				//fmt.Printf("[ ~~~~applyMsgHandlerLoop~~~~ ]: %+v\n", msg)
 				if !kv.ifDuplicate(op.ClientId, op.SeqId) {
 					kv.mu.Lock()
 					switch op.OpType {
@@ -163,17 +162,13 @@ func (kv *KVServer) applyMsgHandlerLoop() {
 					// 如果需要日志的容量达到规定值则需要制作快照并且投递
 					if kv.isNeedSnapshot() {
 						go kv.makeSnapshot(msg.CommandIndex)
-						//go kv.deliverSnapshot()
 					}
 					kv.mu.Unlock()
 				}
 				// 将返回的ch返回waitCh
 				kv.getWaitCh(index) <- op
 			} else if msg.SnapshotValid {
-				// 如果是raft传递上来的快照消息，就应用快照，但是不需要响应客户
-				DPrintf(11111, "节点%d应用快照", kv.me)
 				kv.decodeSnapshot(msg.SnapshotIndex, msg.Snapshot)
-
 			}
 		}
 	}
@@ -208,7 +203,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	// 封装Op传到下层start
 	op := Op{OpType: args.Op, Key: args.Key, Value: args.Value, SeqId: args.SeqId, ClientId: args.ClientId}
 
-	//fmt.Printf("[ ----Server[%v]----] : is sending a %v,op is :%+v \n", kv.me, args.Op, op)
 	lastIndex, _, _ := kv.rf.Start(op)
 	op.Index = lastIndex
 
@@ -225,8 +219,6 @@ func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 	timer := time.NewTicker(100 * time.Millisecond)
 	select {
 	case replyOp := <-ch:
-		//fmt.Printf("[ ----Server[%v]----] : receive a %vAsk :%+v,Op:%+v\n", kv.me, args.Op, args, replyOp)
-		// 通过clientId、seqId确定唯一操作序列
 		if op.ClientId != replyOp.ClientId || op.SeqId != replyOp.SeqId {
 			reply.Err = ErrWrongLeader
 		} else {
