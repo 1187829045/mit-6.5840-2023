@@ -36,3 +36,6 @@ func (log *Log) String() string {
 func (log *Log) empty() bool {
 	return log.FirstLogIndex > log.LastLogIndex
 }
+func (rf *Raft) GetLogEntries() []Entry {
+	return rf.log.Entries
+}

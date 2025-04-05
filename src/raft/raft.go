@@ -242,3 +242,13 @@ func (rf *Raft) ticker() {
 		time.Sleep(tickInterval)
 	}
 }
+func (rf *Raft) GetLastIncludeIndex() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.snapshotLastIncludeIndex
+}
+func (rf *Raft) GetSnapshot() []byte {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.snapshot
+}

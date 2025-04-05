@@ -53,7 +53,6 @@ func (ck *Clerk) Get(key string) string {
 
 		// 节点发生crash等原因
 		serverId = (serverId + 1) % len(ck.servers)
-
 	}
 
 }

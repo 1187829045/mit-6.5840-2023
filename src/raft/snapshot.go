@@ -14,7 +14,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	// Your code here (2D).
 	//leader节点收到快照后的步骤大概是
 	rf.mu.Lock()
-	defer rf.mu.Unlock() //忘记枷锁了
+	defer rf.mu.Unlock()
 	if rf.state != Leader {
 		return
 	}
