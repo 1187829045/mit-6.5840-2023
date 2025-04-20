@@ -48,7 +48,7 @@ const (
 	TaskStateDone = 2
 )
 
-// Your code here -- RPC handlers for the worker to call.
+// WorkerHandler Your code here -- RPC handlers for the worker to call.
 func (c *Coordinator) WorkerHandler(args *WorkerArgs, reply *WorkerReply) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
